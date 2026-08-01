@@ -1509,9 +1509,11 @@ function TradeJournal({ session, onLogout }) {
 
         {tab === "dashboard" ? (
           <>
-            <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, marginBottom: 24 }}>
+            <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
+              <StatCard label="Account size" value={fmtMoney(currentBalance)} color={currentBalance >= 0 ? COLORS.win : COLORS.loss} />
               <StatCard label="Your total P&L" value={fmtMoney(totalPnl)} color={totalPnl >= 0 ? COLORS.win : COLORS.loss} />
               <StatCard label="Your win rate" value={`${winRate}%`} />
+              <StatCard label="Best state of mind" value={bestPattern ? bestPattern.label : "—"} color={bestPattern ? COLORS.win : undefined} />
             </div>
 
             <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Friends</div>
