@@ -327,3 +327,53 @@ create policy "select accepted friends trades" on public.trades
           or (f.addressee_id = auth.uid() and f.requester_id = trades.user_id))
     )
   );
+
+-- =========================================================================
+-- patterns — user-defined trade setups/"confluences" you can tag onto a
+-- trade. Distinct from the mood-based "how you perform by how you felt"
+-- view, which is derived from journal entries instead of this table.
+-- =========================================================================
+create table if not exists public.patterns (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  name text not null,
+  created_at timestamptz not null default now(),
+  unique (user_id, name)
+);
+
+alter table public.patterns enable row level security;
+
+drop policy if exists "select own patterns" on public.patterns;
+create policy "select own patterns" on public.patterns
+  for select using (auth.uid() = user_id);
+drop policy if exists "insert own patterns" on public.patterns;
+create policy "insert own patterns" on public.patterns
+  for insert with check (auth.uid() = user_id);
+drop policy if exists "delete own patterns" on public.patterns;
+create policy "delete own patterns" on public.patterns
+  for delete using (auth.uid() = user_id);
+
+-- =========================================================================
+-- trade_patterns — many-to-many: which confluences were tagged on a trade
+-- =========================================================================
+create table if not exists public.trade_patterns (
+  trade_id uuid not null references public.trades (id) on delete cascade,
+  pattern_id uuid not null references public.patterns (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  primary key (trade_id, pattern_id)
+);
+
+create index if not exists trade_patterns_trade_idx on public.trade_patterns (trade_id);
+create index if not exists trade_patterns_pattern_idx on public.trade_patterns (pattern_id);
+
+alter table public.trade_patterns enable row level security;
+
+drop policy if exists "select own trade patterns" on public.trade_patterns;
+create policy "select own trade patterns" on public.trade_patterns
+  for select using (auth.uid() = user_id);
+drop policy if exists "insert own trade patterns" on public.trade_patterns;
+create policy "insert own trade patterns" on public.trade_patterns
+  for insert with check (auth.uid() = user_id);
+drop policy if exists "delete own trade patterns" on public.trade_patterns;
+create policy "delete own trade patterns" on public.trade_patterns
+  for delete using (auth.uid() = user_id);

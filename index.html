@@ -894,18 +894,28 @@ function TradeJournal({ session, onLogout }) {
   const [friendStats, setFriendStats] = useState({});
   const [friendStatsLoading, setFriendStatsLoading] = useState(false);
 
+  const [patternsList, setPatternsList] = useState([]);
+  const [tradePatternLinks, setTradePatternLinks] = useState([]);
+  const [newPatternName, setNewPatternName] = useState("");
+  const [patternFormError, setPatternFormError] = useState(null);
+  const [tConfluences, setTConfluences] = useState([]);
+
   // ---- Load this user's data from Supabase on mount ----
   async function reloadAllData() {
-    const [tradesRes, entriesRes, targetsRes, mediaRes] = await Promise.all([
+    const [tradesRes, entriesRes, targetsRes, mediaRes, patternsRes, tradePatternsRes] = await Promise.all([
       supabaseClient.from("trades").select("*").eq("user_id", userId).order("date", { ascending: false }),
       supabaseClient.from("journal_entries").select("*").order("date", { ascending: false }),
       supabaseClient.from("targets").select("*").eq("user_id", userId).maybeSingle(),
       supabaseClient.from("trade_media").select("*"),
+      supabaseClient.from("patterns").select("*").order("name", { ascending: true }),
+      supabaseClient.from("trade_patterns").select("*"),
     ]);
     if (tradesRes.error) throw tradesRes.error;
     if (entriesRes.error) throw entriesRes.error;
     if (targetsRes.error) throw targetsRes.error;
     if (mediaRes.error) throw mediaRes.error;
+    if (patternsRes.error) throw patternsRes.error;
+    if (tradePatternsRes.error) throw tradePatternsRes.error;
 
     const mediaByTrade = {};
     (mediaRes.data || []).forEach((row) => {
@@ -921,6 +931,8 @@ function TradeJournal({ session, onLogout }) {
     setTrades(loadedTrades);
     setEntries((entriesRes.data || []).map(rowToEntry));
     setTargets(rowToTargets(targetsRes.data));
+    setPatternsList(patternsRes.data || []);
+    setTradePatternLinks(tradePatternsRes.data || []);
   }
 
   useEffect(() => {
@@ -997,6 +1009,33 @@ function TradeJournal({ session, onLogout }) {
     const { error } = await supabaseClient.from("friendships").delete().eq("id", id);
     if (error) { setFriendRequestError("Couldn't remove that."); return; }
     setFriendships(friendships.filter((f) => f.id !== id));
+  }
+
+  // ---- Custom patterns ("confluences") — user-defined trade setups you can tag onto trades ----
+  async function addPattern(e) {
+    e.preventDefault();
+    setPatternFormError(null);
+    const name = newPatternName.trim();
+    if (!name) { setPatternFormError("Enter a pattern name."); return; }
+    const { data, error } = await supabaseClient.from("patterns").insert({ user_id: userId, name }).select().single();
+    if (error) {
+      setPatternFormError(error.code === "23505" ? "You already have a pattern with that name." : "Couldn't save that pattern.");
+      return;
+    }
+    setPatternsList([...patternsList, data].sort((a, b) => a.name.localeCompare(b.name)));
+    setNewPatternName("");
+  }
+
+  async function deletePattern(id) {
+    const { error } = await supabaseClient.from("patterns").delete().eq("id", id);
+    if (error) { setPatternFormError("Couldn't delete that pattern."); return; }
+    setPatternsList(patternsList.filter((p) => p.id !== id));
+    setTradePatternLinks(tradePatternLinks.filter((l) => l.pattern_id !== id));
+    setTConfluences(tConfluences.filter((pid) => pid !== id));
+  }
+
+  function toggleConfluence(id) {
+    setTConfluences((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
 
   const acceptedFriends = friendships.filter((f) => f.status === "accepted");
@@ -1077,9 +1116,16 @@ function TradeJournal({ session, onLogout }) {
     if (error) { setTradeFormError("Couldn't save the trade — try again."); return; }
     const next = [{ ...rowToTrade(data), media: [] }, ...trades].sort((a, b) => (a.date < b.date ? 1 : -1));
     setTrades(next);
+
+    if (tConfluences.length) {
+      const linkRows = tConfluences.map((patternId) => ({ trade_id: data.id, pattern_id: patternId, user_id: userId }));
+      const { data: insertedLinks, error: linkErr } = await supabaseClient.from("trade_patterns").insert(linkRows).select();
+      if (!linkErr) setTradePatternLinks([...tradePatternLinks, ...insertedLinks]);
+    }
+
     setSaveError(null);
     setTPnl(""); setTDur(""); setTSymbol("");
-    setTRisk(""); setTRR(""); setTSide("long"); setTGrade(""); setTEntryType("trade");
+    setTRisk(""); setTRR(""); setTSide("long"); setTGrade(""); setTEntryType("trade"); setTConfluences([]);
   }
 
   async function addEntry(e) {
@@ -1289,6 +1335,18 @@ function TradeJournal({ session, onLogout }) {
 
   const bestPattern = patternStats[0];
   const worstPattern = patternStats[patternStats.length - 1];
+
+  const patternPerf = patternsList.map((p) => {
+    const linkedTradeIds = new Set(tradePatternLinks.filter((l) => l.pattern_id === p.id).map((l) => l.trade_id));
+    const taggedTrades = tradingOnly.filter((t) => linkedTradeIds.has(t.id));
+    const count = taggedTrades.length;
+    const total = taggedTrades.reduce((s, t) => s + t.pnl, 0);
+    const wins = taggedTrades.filter((t) => t.pnl > 0).length;
+    const winRateP = count ? Math.round((wins / count) * 100) : 0;
+    const biggestWin = count ? Math.max(...taggedTrades.map((t) => t.pnl)) : null;
+    const biggestLoss = count ? Math.min(...taggedTrades.map((t) => t.pnl)) : null;
+    return { id: p.id, name: p.name, count, total, winRateP, biggestWin, biggestLoss };
+  });
 
   // ---- Calendar: group trades by date, build week rows with a trailing Total column ----
   const dayMap = trades.reduce((acc, t) => {
@@ -1610,6 +1668,32 @@ function TradeJournal({ session, onLogout }) {
                     </select>
                   </Field>
                 </div>
+              )}
+              {tEntryType === "trade" && (
+                <Field label="Confluences (optional)">
+                  {patternsList.length === 0 ? (
+                    <div style={{ fontSize: 12.5, color: COLORS.textMuted }}>No patterns yet — add some in the Patterns tab.</div>
+                  ) : (
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {patternsList.map((p) => {
+                        const active = tConfluences.includes(p.id);
+                        return (
+                          <button
+                            type="button" key={p.id} onClick={() => toggleConfluence(p.id)}
+                            style={{
+                              background: active ? COLORS.accentSoft : COLORS.subtleBg,
+                              border: `1.5px solid ${active ? COLORS.accent : COLORS.border}`,
+                              color: active ? COLORS.accent : COLORS.textMuted,
+                              padding: "6px 14px", borderRadius: 20, fontSize: 12.5, fontWeight: 600, cursor: "pointer",
+                            }}
+                          >
+                            {p.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </Field>
               )}
               {tradeFormError && (
                 <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>
@@ -2140,6 +2224,46 @@ function TradeJournal({ session, onLogout }) {
           </>
         ) : tab === "patterns" ? (
           <>
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Your patterns</div>
+            <form onSubmit={addPattern} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+              <Field label="New pattern name" style={{ flex: "1 1 220px" }}>
+                <input type="text" value={newPatternName} onChange={(e) => setNewPatternName(e.target.value)} placeholder="e.g. Breakout retest" style={inputStyle_()} />
+              </Field>
+              <button type="submit" style={primaryBtnStyle_()}>Add pattern</button>
+            </form>
+            {patternFormError && (
+              <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13, marginBottom: 16 }}>
+                {patternFormError}
+              </div>
+            )}
+
+            {patternsList.length === 0 ? (
+              <EmptyState text="No patterns yet. Add one above, then tag it onto trades as a confluence when logging them." />
+            ) : (
+              <div style={{ display: "grid", gap: 10, marginBottom: 28 }}>
+                {patternPerf.map((p) => (
+                  <div key={p.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                      <span style={{ fontSize: 14, fontWeight: 700 }}>{p.name}</span>
+                      <button onClick={() => deletePattern(p.id)} style={deleteBtnStyle_()} aria-label="Delete pattern">✕</button>
+                    </div>
+                    {p.count === 0 ? (
+                      <div style={{ fontSize: 12.5, color: COLORS.textMuted }}>No trades tagged with this pattern yet.</div>
+                    ) : (
+                      <div className="mono" style={{ display: "flex", gap: 20, fontSize: 12.5, color: COLORS.textMuted, flexWrap: "wrap" }}>
+                        <span>{p.count} trade{p.count === 1 ? "" : "s"}</span>
+                        <span>Win rate <span style={{ fontWeight: 700, color: COLORS.text }}>{p.winRateP}%</span></span>
+                        <span>Total P&L <span style={{ fontWeight: 700, color: p.total >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(p.total)}</span></span>
+                        <span>Biggest win <span style={{ fontWeight: 700, color: COLORS.win }}>{fmtMoney(p.biggestWin)}</span></span>
+                        <span>Biggest loss <span style={{ fontWeight: 700, color: COLORS.loss }}>{fmtMoney(p.biggestLoss)}</span></span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>By mood</div>
             {patternStats.length === 0 ? (
               <EmptyState text="Link journal entries to trades (in the Journal tab) to see how you perform by how you felt." />
             ) : (
@@ -2518,6 +2642,10 @@ function TradeJournal({ session, onLogout }) {
       {viewTradeId && (() => {
         const t = findTrade(viewTradeId);
         if (!t) return null;
+        const tradeConfluenceNames = tradePatternLinks
+          .filter((l) => l.trade_id === t.id)
+          .map((l) => { const pat = patternsList.find((p) => p.id === l.pattern_id); return pat ? pat.name : null; })
+          .filter(Boolean);
         const fields = [
           { label: "Date", value: t.date },
           { label: "Symbol", value: t.symbol || "—" },
@@ -2527,6 +2655,7 @@ function TradeJournal({ session, onLogout }) {
           { label: "Risk", value: t.risk !== null && t.risk !== undefined ? `${t.risk}%` : "—" },
           { label: "R:R", value: t.rr !== null && t.rr !== undefined ? `${t.rr}R` : "—" },
           { label: "Grade", value: t.grade || "—", color: t.grade ? gradeColor(t.grade) : null },
+          { label: "Confluences", value: tradeConfluenceNames.length ? tradeConfluenceNames.join(", ") : "—" },
         ];
         return (
           <div onClick={() => setViewTradeId(null)} style={{ position: "fixed", inset: 0, background: "rgba(20,20,35,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 55 }}>
