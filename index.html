@@ -876,7 +876,7 @@ function TradeJournal({ session, onLogout }) {
   const [theme, setTheme] = useState(() => loadLocal(THEME_KEY, "light"));
   applyTheme(theme); // mutate the shared COLORS object before anything below reads it
 
-  const [tab, setTab] = useState("trades");
+  const [tab, setTab] = useState("dashboard");
   const [trades, setTrades] = useState([]);
   const [entries, setEntries] = useState([]);
   const [targets, setTargets] = useState(() => rowToTargets(null));
