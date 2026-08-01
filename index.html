@@ -146,12 +146,20 @@ function fmtMoney(n) {
   const sign = num > 0 ? "+" : num < 0 ? "−" : "";
   return `${sign}$${Math.abs(num).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
-function fmtDuration(mins) {
-  const m = Number(mins) || 0;
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  const rem = m % 60;
-  return rem ? `${h}h ${rem}m` : `${h}h`;
+function fmtDuration(totalSeconds) {
+  const s = Math.max(0, Math.round(Number(totalSeconds) || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const parts = [];
+  if (h) parts.push(`${h}h`);
+  if (m) parts.push(`${m}m`);
+  if (sec || parts.length === 0) parts.push(`${sec}s`);
+  return parts.join(" ");
+}
+function secondsToHMS(totalSeconds) {
+  const s = Math.max(0, Math.round(Number(totalSeconds) || 0));
+  return { h: Math.floor(s / 3600), m: Math.floor((s % 3600) / 60), s: s % 60 };
 }
 function loadLocal(key, fallback) {
   try {
@@ -197,7 +205,7 @@ function rowToTrade(row) {
     symbol: row.symbol || "",
     side: row.side || "long",
     pnl: Number(row.pnl),
-    duration: Number(row.duration) || 0,
+    duration: Number(row.duration_seconds) || 0,
     risk: row.risk === null || row.risk === undefined ? null : Number(row.risk),
     rr: row.rr === null || row.rr === undefined ? null : Number(row.rr),
     grade: row.grade || null,
@@ -212,7 +220,7 @@ function tradeToRow(t, userId) {
     symbol: t.symbol ? t.symbol : null,
     side: t.entryType === "payout" ? null : (t.side || "long"),
     pnl: Number(t.pnl) || 0,
-    duration: Number(t.duration) || 0,
+    duration_seconds: Number(t.duration) || 0,
     risk: t.risk === "" || t.risk === null || t.risk === undefined ? null : Number(t.risk),
     rr: t.rr === "" || t.rr === null || t.rr === undefined ? null : Number(t.rr),
     grade: t.grade || null,
@@ -767,6 +775,7 @@ function AuthScreen() {
   const [mode, setMode] = useState("login"); // 'login' | 'signup'
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [nickname, setNickname] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
@@ -776,10 +785,14 @@ function AuthScreen() {
     setError(null);
     setMessage(null);
     if (!email || !password) { setError("Enter an email and password."); return; }
+    if (mode === "signup" && !nickname.trim()) { setError("Enter a nickname — it's what your friends will see."); return; }
     setBusy(true);
     try {
       if (mode === "signup") {
-        const { error: err } = await supabaseClient.auth.signUp({ email, password });
+        const { error: err } = await supabaseClient.auth.signUp({
+          email, password,
+          options: { data: { display_name: nickname.trim() } },
+        });
         if (err) throw err;
         setMessage("Account created. Check your email to confirm it, then log in.");
         setMode("login");
@@ -801,6 +814,11 @@ function AuthScreen() {
           <div style={{ fontSize: 20, fontWeight: 700, color: COLORS.text, marginBottom: 4 }}>A+ Trades</div>
           <div style={{ fontSize: 13, color: COLORS.textMuted }}>{mode === "signup" ? "Create your account" : "Log in to your account"}</div>
         </div>
+        {mode === "signup" && (
+          <Field label="Nickname (shown to friends)">
+            <input type="text" value={nickname} onChange={(e) => setNickname(e.target.value)} placeholder="e.g. Jakub" style={inputStyle_()} autoComplete="nickname" />
+          </Field>
+        )}
         <Field label="Email">
           <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" style={inputStyle_()} autoComplete="email" />
         </Field>
@@ -870,7 +888,9 @@ function TradeJournal({ session, onLogout }) {
 
   const [tDate, setTDate] = useState(todayStr());
   const [tPnl, setTPnl] = useState("");
-  const [tDur, setTDur] = useState("");
+  const [tDurH, setTDurH] = useState("");
+  const [tDurM, setTDurM] = useState("");
+  const [tDurS, setTDurS] = useState("");
   const [tSymbol, setTSymbol] = useState("");
   const [tEntryType, setTEntryType] = useState("trade");
   const [tSide, setTSide] = useState("long");
@@ -1189,7 +1209,7 @@ function TradeJournal({ session, onLogout }) {
     const draft = {
       date: tDate,
       pnl: tEntryType === "payout" ? -Math.abs(Number(tPnl)) : Number(tPnl),
-      duration: Number(tDur) || 0,
+      duration: (Number(tDurH) || 0) * 3600 + (Number(tDurM) || 0) * 60 + (Number(tDurS) || 0),
       symbol: tSymbol.trim(),
       side: tSide, risk: tRisk === "" ? null : Number(tRisk), rr: tRR === "" ? null : Number(tRR), grade: tGrade || null, entryType: tEntryType,
     };
@@ -1210,7 +1230,7 @@ function TradeJournal({ session, onLogout }) {
 
     setSaveError(null);
     setTConfluenceTimeframes({});
-    setTPnl(""); setTDur(""); setTSymbol("");
+    setTPnl(""); setTDurH(""); setTDurM(""); setTDurS(""); setTSymbol("");
     setTRisk(""); setTRR(""); setTSide("long"); setTGrade(""); setTEntryType("trade"); setTConfluences([]);
   }
 
@@ -1245,12 +1265,13 @@ function TradeJournal({ session, onLogout }) {
 
   function openEditTrade(t) {
     setEditingTradeId(t.id);
+    const hms = secondsToHMS(t.duration);
     setEditForm({
       date: t.date,
       symbol: t.symbol || "",
       side: t.side || "long",
       pnl: t.pnl === null || t.pnl === undefined ? "" : String(t.pnl),
-      duration: t.duration === null || t.duration === undefined ? "" : String(t.duration),
+      durationH: String(hms.h), durationM: String(hms.m), durationS: String(hms.s),
       risk: t.risk === null || t.risk === undefined ? "" : String(t.risk),
       rr: t.rr === null || t.rr === undefined ? "" : String(t.rr),
       grade: t.grade || "",
@@ -1264,12 +1285,13 @@ function TradeJournal({ session, onLogout }) {
       return;
     }
     const current = trades.find((t) => t.id === editingTradeId);
+    const durationSeconds = (Number(editForm.durationH) || 0) * 3600 + (Number(editForm.durationM) || 0) * 60 + (Number(editForm.durationS) || 0);
     const patch = {
       date: editForm.date,
       symbol: editForm.symbol.trim() || null,
       side: current.entryType === "payout" ? null : editForm.side,
       pnl: current.entryType === "payout" ? -Math.abs(Number(editForm.pnl)) : Number(editForm.pnl),
-      duration: Number(editForm.duration) || 0,
+      duration_seconds: durationSeconds,
       risk: editForm.risk === "" ? null : Number(editForm.risk),
       rr: editForm.rr === "" ? null : Number(editForm.rr),
       grade: editForm.grade || null,
@@ -1282,7 +1304,7 @@ function TradeJournal({ session, onLogout }) {
       symbol: patch.symbol || "",
       side: patch.side || t.side,
       pnl: patch.pnl,
-      duration: patch.duration,
+      duration: patch.duration_seconds,
       risk: patch.risk,
       rr: patch.rr,
       grade: patch.grade,
@@ -1450,6 +1472,10 @@ function TradeJournal({ session, onLogout }) {
     const biggestLoss = count ? Math.min(...taggedTrades.map((t) => t.pnl)) : null;
     return { id: p.id, label, grade: p.grade, count, total, winRateP, biggestWin, biggestLoss };
   });
+  const ratedPatternPerf = patternPerf.filter((p) => p.count > 0);
+  const bestConfluencePattern = ratedPatternPerf.length
+    ? [...ratedPatternPerf].sort((a, b) => b.total - a.total)[0]
+    : null;
 
   // ---- Calendar: group trades by date, build week rows with a trailing Total column ----
   const dayMap = trades.reduce((acc, t) => {
@@ -1670,11 +1696,14 @@ function TradeJournal({ session, onLogout }) {
 
         {tab === "dashboard" ? (
           <>
-            <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
+            <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 12 }}>
               <StatCard label="Account size" value={fmtMoney(currentBalance)} color={currentBalance >= 0 ? COLORS.win : COLORS.loss} />
               <StatCard label="Your total P&L" value={fmtMoney(totalPnl)} color={totalPnl >= 0 ? COLORS.win : COLORS.loss} />
               <StatCard label="Your win rate" value={`${winRate}%`} />
+            </div>
+            <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, marginBottom: 24 }}>
               <StatCard label="Best state of mind" value={bestPattern ? bestPattern.label : "—"} color={bestPattern ? COLORS.win : undefined} />
+              <StatCard label="Best pattern" value={bestConfluencePattern ? bestConfluencePattern.label : "—"} color={bestConfluencePattern ? COLORS.win : undefined} />
             </div>
 
             <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Friends</div>
@@ -1743,8 +1772,12 @@ function TradeJournal({ session, onLogout }) {
                   />
                 </Field>
                 {tEntryType === "trade" && (
-                  <Field label="Duration (min)" style={{ flex: "1 1 140px" }}>
-                    <input type="number" min="0" value={tDur} onChange={(e) => setTDur(e.target.value)} placeholder="45" style={inputStyle_()} className="mono" />
+                  <Field label="Duration" style={{ flex: "1 1 220px" }}>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <input type="number" min="0" value={tDurH} onChange={(e) => setTDurH(e.target.value)} placeholder="0h" style={inputStyle_()} className="mono" />
+                      <input type="number" min="0" value={tDurM} onChange={(e) => setTDurM(e.target.value)} placeholder="0m" style={inputStyle_()} className="mono" />
+                      <input type="number" min="0" value={tDurS} onChange={(e) => setTDurS(e.target.value)} placeholder="0s" style={inputStyle_()} className="mono" />
+                    </div>
                   </Field>
                 )}
               </div>
@@ -2744,8 +2777,12 @@ function TradeJournal({ session, onLogout }) {
                 <Field label="P&L ($)" style={{ flex: "1 1 110px" }}>
                   <input type="number" step="0.01" value={editForm.pnl} onChange={(e) => setEditForm({ ...editForm, pnl: e.target.value })} style={inputStyle_()} className="mono" />
                 </Field>
-                <Field label="Duration (min)" style={{ flex: "1 1 110px" }}>
-                  <input type="number" min="0" value={editForm.duration} onChange={(e) => setEditForm({ ...editForm, duration: e.target.value })} style={inputStyle_()} className="mono" />
+                <Field label="Duration" style={{ flex: "1 1 200px" }}>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <input type="number" min="0" value={editForm.durationH} onChange={(e) => setEditForm({ ...editForm, durationH: e.target.value })} placeholder="0h" style={inputStyle_()} className="mono" />
+                    <input type="number" min="0" value={editForm.durationM} onChange={(e) => setEditForm({ ...editForm, durationM: e.target.value })} placeholder="0m" style={inputStyle_()} className="mono" />
+                    <input type="number" min="0" value={editForm.durationS} onChange={(e) => setEditForm({ ...editForm, durationS: e.target.value })} placeholder="0s" style={inputStyle_()} className="mono" />
+                  </div>
                 </Field>
               </div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>

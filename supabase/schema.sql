@@ -222,8 +222,8 @@ language plpgsql
 security definer set search_path = public
 as $$
 begin
-  insert into public.profiles (id, email, subscription_status, created_at)
-  values (new.id, new.email, 'trialing', now());
+  insert into public.profiles (id, email, display_name, subscription_status, created_at)
+  values (new.id, new.email, new.raw_user_meta_data->>'display_name', 'trialing', now());
   return new;
 end;
 $$;
@@ -443,3 +443,36 @@ create policy "insert own pattern confluences" on public.pattern_confluences
 drop policy if exists "delete own pattern confluences" on public.pattern_confluences;
 create policy "delete own pattern confluences" on public.pattern_confluences
   for delete using (auth.uid() = user_id);
+
+-- =========================================================================
+-- trades.duration migrates from whole minutes to whole seconds, so the app
+-- can show/edit duration as hours + minutes + seconds instead of just
+-- minutes. Wrapped in a DO block because "change the column's unit and drop
+-- the old one" isn't naturally idempotent with plain create/alter
+-- statements — this guards re-runs after `duration` is already gone.
+-- =========================================================================
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'trades' and column_name = 'duration'
+  ) then
+    if not exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'trades' and column_name = 'duration_seconds'
+    ) then
+      alter table public.trades add column duration_seconds integer;
+    end if;
+    update public.trades set duration_seconds = coalesce(duration, 0) * 60 where duration_seconds is null;
+    alter table public.trades drop column duration;
+  elsif not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'trades' and column_name = 'duration_seconds'
+  ) then
+    alter table public.trades add column duration_seconds integer not null default 0;
+  end if;
+end $$;
+
+update public.trades set duration_seconds = 0 where duration_seconds is null;
+alter table public.trades alter column duration_seconds set default 0;
+alter table public.trades alter column duration_seconds set not null;
