@@ -1,0 +1,2483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>A+ Trades</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22%237C5CFC%22/><text x=%2250%22 y=%2268%22 font-size=%2258%22 text-anchor=%22middle%22 fill=%22white%22 font-family=%22Arial,sans-serif%22 font-weight=%22bold%22>Z</text></svg>">
+<style>
+  html, body { margin: 0; padding: 0; background: #F3F4F9; }
+  * { box-sizing: border-box; }
+  input, textarea, select, button { font-family: inherit; }
+  input:focus, textarea:focus, select:focus, button:focus-visible {
+    outline: 2px solid #7C5CFC;
+    outline-offset: 1px;
+  }
+  ::placeholder { color: #A6ABBD; }
+  .mono { font-family: 'SFMono-Regular', ui-monospace, 'IBM Plex Mono', Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; font-feature-settings: "zero" 0, "cv01" 0, "ss20" 0; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #D8DAE8; border-radius: 8px; }
+  @media (max-width: 780px) {
+    .sidebar { flex-direction: row !important; width: 100% !important; height: auto !important; position: static !important; padding: 8px 10px !important; gap: 4px !important; }
+    .sidebar .logo-block { display: none !important; }
+    .sidebar nav { flex-direction: row !important; width: 100%; justify-content: space-around; }
+    .main-content { margin-left: 0 !important; }
+    .stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
+    .perf-top { flex-direction: column !important; }
+    .perf-targets { width: 100% !important; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.25.6/babel.min.js"></script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef } = React;
+
+// ---- Supabase config ----
+// Both values below are PUBLIC by design — safe to ship in client-side code.
+// Access control is enforced entirely by Postgres Row-Level Security (see
+// supabase/schema.sql), not by keeping these secret. Fill them in from your
+// Supabase project: Project Settings -> API -> Project URL / anon public key.
+const SUPABASE_URL = "https://upjnahcvbajwydsodpfw.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_qWJutUnG3Az6S9tO4noekg_y6AG854b";
+const MEDIA_BUCKET = "trade-media";
+
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const PAYOUT_COLOR = "#0EA5E9";
+
+const LIGHT_COLORS = {
+  bg: "#F3F4F9",
+  sidebar: "#171533",
+  sidebarActive: "#7C5CFC",
+  card: "#FFFFFF",
+  border: "#E6E7F0",
+  text: "#1E2030",
+  textMuted: "#8B8FA3",
+  accent: "#7C5CFC",
+  accentSoft: "#EFEAFF",
+  win: "#16A34A",
+  winSoft: "#E8F8EE",
+  loss: "#E23D45",
+  lossSoft: "#FDECEC",
+  payout: PAYOUT_COLOR,
+  payoutSoft: "#E3F4FC",
+  subtleBg: "#FAFAFD",
+};
+
+const DARK_COLORS = {
+  bg: "#12141C",
+  sidebar: "#0C0D14",
+  sidebarActive: "#8B7CFC",
+  card: "#1B1E29",
+  border: "#2C3040",
+  text: "#EDEEF3",
+  textMuted: "#8C90A3",
+  accent: "#9B8CFF",
+  accentSoft: "#2A2440",
+  win: "#34D399",
+  winSoft: "#173229",
+  loss: "#F87171",
+  lossSoft: "#3A1E20",
+  payout: "#38BDF8",
+  payoutSoft: "#173441",
+  subtleBg: "#242835",
+};
+
+const THEME_KEY = "tj_theme_v1";
+// Mutable — mutated in place (not reassigned) so every component reading COLORS
+// picks up the new palette immediately when the theme toggles.
+const COLORS = { ...LIGHT_COLORS };
+function applyTheme(themeName) {
+  Object.assign(COLORS, themeName === "dark" ? DARK_COLORS : LIGHT_COLORS);
+}
+
+const GRADES = ["B-", "B", "B+", "A-", "A", "A+", "A++"];
+const GRADE_RANK = Object.fromEntries(GRADES.map((g, i) => [g, i]));
+function gradeColor(grade) {
+  if (!grade) return null;
+  const rank = GRADE_RANK[grade];
+  if (rank >= 3) return "#16A34A";       // A- through A++
+  return "#2563EB";                       // B- through B+
+}
+function pnlColor(t) {
+  if (t.entryType === "payout") return COLORS.payout;
+  return t.pnl >= 0 ? COLORS.win : COLORS.loss;
+}
+
+const MOODS = [
+  { key: "calm", label: "Calm", color: "#16A34A" },
+  { key: "confident", label: "Confident", color: "#2563EB" },
+  { key: "anxious", label: "Anxious", color: "#D97706" },
+  { key: "fomo", label: "FOMO", color: "#EA580C" },
+  { key: "frustrated", label: "Frustrated", color: "#E23D45" },
+  { key: "flat", label: "Flat / numb", color: "#8B8FA3" },
+];
+
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+function fmtMoney(n) {
+  const num = Number(n) || 0;
+  const sign = num > 0 ? "+" : num < 0 ? "−" : "";
+  return `${sign}$${Math.abs(num).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+function fmtDuration(mins) {
+  const m = Number(mins) || 0;
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  return rem ? `${h}h ${rem}m` : `${h}h`;
+}
+function loadLocal(key, fallback) {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch (e) {
+    return fallback;
+  }
+}
+function saveLocal(key, value) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// ---- Media storage (Supabase Storage — replaces the old IndexedDB blob store) ----
+function mediaPath(userId, tradeId, pathId, filename) {
+  return `${userId}/${tradeId}/${pathId}-${filename}`;
+}
+async function uploadMediaFile(path, file) {
+  const { error } = await supabaseClient.storage.from(MEDIA_BUCKET).upload(path, file, { upsert: false });
+  if (error) throw error;
+}
+async function getMediaSignedUrl(path) {
+  const { data, error } = await supabaseClient.storage.from(MEDIA_BUCKET).createSignedUrl(path, 3600);
+  if (error) throw error;
+  return data.signedUrl;
+}
+async function removeMediaFiles(paths) {
+  if (!paths.length) return;
+  const { error } = await supabaseClient.storage.from(MEDIA_BUCKET).remove(paths);
+  if (error) throw error;
+}
+
+// ---- Supabase row <-> app object mapping ----
+function rowToTrade(row) {
+  return {
+    id: row.id,
+    date: row.date,
+    symbol: row.symbol || "",
+    side: row.side || "long",
+    pnl: Number(row.pnl),
+    duration: Number(row.duration) || 0,
+    risk: row.risk === null || row.risk === undefined ? null : Number(row.risk),
+    rr: row.rr === null || row.rr === undefined ? null : Number(row.rr),
+    grade: row.grade || null,
+    entryType: row.entry_type,
+    media: [],
+  };
+}
+function tradeToRow(t, userId) {
+  return {
+    user_id: userId,
+    date: t.date,
+    symbol: t.symbol ? t.symbol : null,
+    side: t.entryType === "payout" ? null : (t.side || "long"),
+    pnl: Number(t.pnl) || 0,
+    duration: Number(t.duration) || 0,
+    risk: t.risk === "" || t.risk === null || t.risk === undefined ? null : Number(t.risk),
+    rr: t.rr === "" || t.rr === null || t.rr === undefined ? null : Number(t.rr),
+    grade: t.grade || null,
+    entry_type: t.entryType || "trade",
+  };
+}
+function rowToEntry(row) {
+  return {
+    id: row.id,
+    date: row.date,
+    mood: row.mood,
+    feelingDetail: row.feeling_detail || "",
+    conditions: row.conditions || "",
+    notes: row.notes || "",
+    tradeId: row.trade_id || null,
+  };
+}
+function entryToRow(en, userId) {
+  return {
+    user_id: userId,
+    date: en.date,
+    mood: en.mood,
+    feeling_detail: en.feelingDetail ? en.feelingDetail : null,
+    conditions: en.conditions ? en.conditions : null,
+    notes: en.notes ? en.notes : null,
+    trade_id: en.tradeId || null,
+  };
+}
+function rowToTargets(row) {
+  if (!row) {
+    return {
+      profitTarget: "", maxLoss: "", axisStep: "",
+      profitColor: "#16A34A", minBalanceColor: "#E23D45", growthColor: "",
+      axisColor: "",
+      calWinColor: "#16A34A", calLossColor: "#E23D45", calPayoutColor: "#0EA5E9",
+    };
+  }
+  return {
+    profitTarget: row.profit_target === null || row.profit_target === undefined ? "" : String(row.profit_target),
+    maxLoss: row.max_loss === null || row.max_loss === undefined ? "" : String(row.max_loss),
+    axisStep: row.axis_step === null || row.axis_step === undefined ? "" : String(row.axis_step),
+    profitColor: row.profit_color || "#16A34A",
+    minBalanceColor: row.min_balance_color || "#E23D45",
+    growthColor: row.growth_color || "",
+    axisColor: row.axis_color || "",
+    calWinColor: row.cal_win_color || "#16A34A",
+    calLossColor: row.cal_loss_color || "#E23D45",
+    calPayoutColor: row.cal_payout_color || "#0EA5E9",
+  };
+}
+function targetsToRow(t, userId) {
+  return {
+    user_id: userId,
+    profit_target: t.profitTarget === "" || t.profitTarget === null || t.profitTarget === undefined ? null : Number(t.profitTarget),
+    max_loss: t.maxLoss === "" || t.maxLoss === null || t.maxLoss === undefined ? null : Number(t.maxLoss),
+    axis_step: t.axisStep === "" || t.axisStep === null || t.axisStep === undefined ? null : Number(t.axisStep),
+    profit_color: t.profitColor || "#16A34A",
+    min_balance_color: t.minBalanceColor || "#E23D45",
+    growth_color: t.growthColor || null,
+    axis_color: t.axisColor || null,
+    cal_win_color: t.calWinColor || "#16A34A",
+    cal_loss_color: t.calLossColor || "#E23D45",
+    cal_payout_color: t.calPayoutColor || "#0EA5E9",
+  };
+}
+function rowToMedia(row) {
+  return { id: row.id, type: row.type, name: row.name, storagePath: row.storage_path, tradeId: row.trade_id };
+}
+
+// ---- Trade media modal (stable top-level component) ----
+function TradeMediaModal({ trade, onClose, onAddFiles, onDeleteMedia }) {
+  const [urls, setUrls] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [lightbox, setLightbox] = useState(null); // { id, url, type, name }
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const next = {};
+      for (const m of trade.media || []) {
+        try {
+          const url = await getMediaSignedUrl(m.storagePath);
+          next[m.id] = url;
+        } catch (e) { /* skip missing file */ }
+      }
+      if (!cancelled) { setUrls(next); setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [trade.id, (trade.media || []).map((m) => m.id).join(",")]);
+
+  async function handleFiles(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    setBusy(true);
+    await onAddFiles(trade.id, files);
+    setBusy(false);
+  }
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(20,20,35,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 60 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.card, borderRadius: 16, padding: 24, width: "100%", maxWidth: 640, maxHeight: "82vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(20,20,35,0.35)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div>
+            <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600, marginBottom: 2 }}>{trade.date} · {trade.symbol || "—"}</div>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>Photos & videos</div>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", color: COLORS.textMuted, cursor: "pointer", fontSize: 14 }} aria-label="Close">✕</button>
+        </div>
+
+        <label style={{
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+          border: `1.5px dashed ${COLORS.border}`, borderRadius: 12, padding: "18px 14px",
+          color: COLORS.accent, fontSize: 13.5, fontWeight: 600, cursor: "pointer", marginBottom: 16,
+          background: COLORS.accentSoft,
+        }}>
+          {busy ? "Uploading…" : "+ Add photos or videos"}
+          <input type="file" accept="image/*,video/*" multiple onChange={(e) => { handleFiles(e.target.files); e.target.value = ""; }} style={{ display: "none" }} disabled={busy} />
+        </label>
+
+        {loading ? (
+          <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "20px 0" }}>Loading…</div>
+        ) : (trade.media || []).length === 0 ? (
+          <EmptyState text="No photos or videos yet. Add a chart screenshot or trade recap above." />
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 10 }}>
+            {(trade.media || []).map((m) => (
+              <div key={m.id} style={{ position: "relative", borderRadius: 10, overflow: "hidden", border: `1px solid ${COLORS.border}`, background: "#000", aspectRatio: "1 / 1" }}>
+                {urls[m.id] ? (
+                  m.type === "video" ? (
+                    <video src={urls[m.id]} controls style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  ) : (
+                    <img
+                      src={urls[m.id]}
+                      alt={m.name || "trade media"}
+                      onClick={() => setLightbox({ id: m.id, url: urls[m.id], type: m.type, name: m.name })}
+                      style={{ width: "100%", height: "100%", objectFit: "cover", cursor: "zoom-in" }}
+                    />
+                  )
+                ) : (
+                  <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.textMuted, fontSize: 11 }}>Unavailable</div>
+                )}
+                {urls[m.id] && m.type === "video" && (
+                  <button
+                    onClick={() => setLightbox({ id: m.id, url: urls[m.id], type: m.type, name: m.name })}
+                    style={{ position: "absolute", top: 4, left: 4, background: "rgba(20,20,35,0.7)", color: "#fff", border: "none", borderRadius: 6, padding: "2px 7px", cursor: "pointer", fontSize: 11, lineHeight: 1.4 }}
+                    aria-label="Expand video"
+                  >
+                    ⤢
+                  </button>
+                )}
+                <button
+                  onClick={() => onDeleteMedia(trade.id, m.id)}
+                  style={{ position: "absolute", top: 4, right: 4, background: "rgba(20,20,35,0.7)", color: "#fff", border: "none", borderRadius: 6, width: 22, height: 22, cursor: "pointer", fontSize: 12, lineHeight: 1 }}
+                  aria-label="Delete media"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {lightbox && (
+        <div
+          onClick={(e) => { e.stopPropagation(); setLightbox(null); }}
+          style={{ position: "fixed", inset: 0, background: "rgba(10,10,18,0.92)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: 24 }}
+        >
+          <button
+            onClick={(e) => { e.stopPropagation(); setLightbox(null); }}
+            style={{ position: "absolute", top: 18, right: 22, background: "rgba(255,255,255,0.12)", color: "#fff", border: "none", borderRadius: 8, width: 34, height: 34, cursor: "pointer", fontSize: 16 }}
+            aria-label="Close full view"
+          >
+            ✕
+          </button>
+          {lightbox.type === "video" ? (
+            <video src={lightbox.url} controls autoPlay onClick={(e) => e.stopPropagation()} style={{ maxWidth: "92vw", maxHeight: "88vh", borderRadius: 8 }} />
+          ) : (
+            <img src={lightbox.url} alt={lightbox.name || "trade media"} onClick={(e) => e.stopPropagation()} style={{ maxWidth: "92vw", maxHeight: "88vh", objectFit: "contain", borderRadius: 8 }} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- Icons (small inline SVGs, stable module-scope components) ----
+function IconTrades({ active }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+      <path d="M3 17L9 11L13 15L21 7" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M15 7H21V13" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+function IconPatterns({ active }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+      <rect x="3" y="12" width="4" height="8" rx="1" fill={active ? "#fff" : "#8B8FA3"}/>
+      <rect x="10" y="7" width="4" height="13" rx="1" fill={active ? "#fff" : "#8B8FA3"}/>
+      <rect x="17" y="3" width="4" height="17" rx="1" fill={active ? "#fff" : "#8B8FA3"}/>
+    </svg>
+  );
+}
+function IconJournal({ active }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+      <path d="M5 4C5 3.44772 5.44772 3 6 3H16L19 6V20C19 20.5523 18.5523 21 18 21H6C5.44772 21 5 20.5523 5 20V4Z" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2" strokeLinejoin="round"/>
+      <path d="M9 10H15M9 14H15" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2" strokeLinecap="round"/>
+    </svg>
+  );
+}
+function IconCalendar({ active }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+      <rect x="3" y="5" width="18" height="16" rx="2" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2"/>
+      <path d="M3 9H21" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2"/>
+      <path d="M8 3V6M16 3V6" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2" strokeLinecap="round"/>
+    </svg>
+  );
+}
+
+// ---- Stable, top-level presentational components ----
+function StatCard({ label, value, color }) {
+  return (
+    <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: "16px 18px", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+      <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 500, marginBottom: 8 }}>{label}</div>
+      <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: color || COLORS.text }}>{value}</div>
+    </div>
+  );
+}
+
+function Field({ label, children, style }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, ...style }}>
+      <label style={{ fontSize: 12.5, color: COLORS.textMuted, fontWeight: 500 }}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function smoothPath(pts) {
+  if (pts.length < 2) return "";
+  if (pts.length === 2) return `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)} L ${pts[1].x.toFixed(1)} ${pts[1].y.toFixed(1)}`;
+  let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[i + 2] || p2;
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+    d += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+  }
+  return d;
+}
+
+function EquityChart({ points, width = 900, height = 220, profitTarget = null, maxLossLevel = null, axisStep = null, growthColor = null, profitColor = null, minBalanceColor = null, axisColor = null }) {
+  const svgRef = useRef(null);
+  const [hoverIdx, setHoverIdx] = useState(null);
+
+  if (!points || points.length < 2) {
+    return (
+      <div style={{ height, display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.textMuted, fontSize: 13 }}>
+        Log trades to see your account grow.
+      </div>
+    );
+  }
+  const balances = points.map((p) => p.balance);
+  const minBalanceOnly = Math.min(...balances);
+  const targetLevels = [];
+  if (profitTarget !== null && !Number.isNaN(profitTarget)) targetLevels.push(profitTarget);
+  if (maxLossLevel !== null && !Number.isNaN(maxLossLevel)) targetLevels.push(maxLossLevel);
+  const allMinBalances = points.map((p) => p.minBalance).filter((v) => v !== null && v !== undefined && !Number.isNaN(v));
+  if (allMinBalances.length) targetLevels.push(Math.min(...allMinBalances), Math.max(...allMinBalances));
+  const max = Math.max(0, ...balances, ...targetLevels);
+  const min = Math.min(0, ...balances, ...targetLevels);
+  const range = max - min || 1;
+  const padTop = 16, padBottom = 34, padRight = 62;
+  const usableH = height - padTop - padBottom;
+  const stepX = (width - padRight) / (points.length - 1);
+
+  function xAt(i) { return i * stepX; }
+  function yAt(bal) { return padTop + usableH - ((bal - min) / range) * usableH; }
+  const zeroY = yAt(0);
+
+  function fmtAxis(v) {
+    const sign = v < 0 ? "−" : "";
+    const abs = Math.abs(v);
+    if (abs >= 1000) return `${sign}$${(abs / 1000).toFixed(abs % 1000 === 0 ? 0 : 1)}k`;
+    return `${sign}$${Math.round(abs)}`;
+  }
+  function niceStep(span, targetCount) {
+    const roughStep = span / Math.max(targetCount, 1);
+    const magnitude = Math.pow(10, Math.floor(Math.log10(roughStep || 1)));
+    const residual = roughStep / magnitude;
+    let niceResidual;
+    if (residual > 5) niceResidual = 10;
+    else if (residual > 2) niceResidual = 5;
+    else if (residual > 1) niceResidual = 2;
+    else niceResidual = 1;
+    return niceResidual * magnitude;
+  }
+  const yStep = (axisStep !== null && !Number.isNaN(axisStep) && axisStep > 0) ? axisStep : (niceStep(range, 4) || 1);
+  const yTickStart = Math.ceil(min / yStep) * yStep;
+  const yTicksRaw = [];
+  for (let v = yTickStart; v <= max + yStep * 0.001; v += yStep) yTicksRaw.push(Math.round(v * 100) / 100);
+  const yTicks = yTicksRaw.length ? yTicksRaw : [min, max];
+
+  const linePoints = points.map((p, i) => ({ x: xAt(i), y: yAt(p.balance) }));
+  const linePath = smoothPath(linePoints);
+  const chartBottomY = height - padBottom + 10;
+  const areaPath = `${linePath} L ${xAt(points.length - 1).toFixed(1)} ${chartBottomY.toFixed(1)} L 0 ${chartBottomY.toFixed(1)} Z`;
+  const last = points[points.length - 1];
+  const positive = last.balance >= 0;
+  const lineColor = growthColor || (positive ? COLORS.win : COLORS.loss);
+
+  const datedPoints = points.filter((p) => p.date);
+  const years = new Set(datedPoints.map((p) => p.date.slice(0, 4)));
+  const showYear = years.size > 1;
+
+  function fmtTick(dateStr) {
+    if (!dateStr) return "";
+    const d = new Date(dateStr + "T00:00:00");
+    if (Number.isNaN(d.getTime())) return dateStr;
+    return d.toLocaleDateString(undefined, showYear ? { month: "short", day: "numeric", year: "2-digit" } : { month: "short", day: "numeric" });
+  }
+
+  // De-duplicate the synthetic starting point when it falls on the same day as the first real trade
+  let dedupedPoints = points;
+  if (points.length > 2 && points[0].date === points[1].date) {
+    dedupedPoints = [{ ...points[0], synthetic: true }, ...points.slice(1)];
+  }
+
+  function handleMouseMove(e) {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const relX = e.clientX - rect.left;
+    const svgX = (relX / rect.width) * width;
+    let idx = Math.round(svgX / stepX);
+    idx = Math.max(0, Math.min(dedupedPoints.length - 1, idx));
+    setHoverIdx(idx);
+  }
+  function handleMouseLeave() { setHoverIdx(null); }
+
+  const desiredTickCount = Math.min(Math.max(4, Math.floor((width - padRight) / 55)), dedupedPoints.length);
+  const step = Math.max(1, Math.ceil((dedupedPoints.length - 1) / Math.max(desiredTickCount - 1, 1)));
+  const rawTickIdxs = [];
+  for (let i = 0; i < dedupedPoints.length; i += step) rawTickIdxs.push(i);
+  // Drop ticks whose label duplicates the previous shown tick's label (avoids "Jul 7 · Jul 7")
+  const tickIdxs = [];
+  let lastLabel = null;
+  rawTickIdxs.forEach((i) => {
+    const lbl = fmtTick(dedupedPoints[i].date);
+    if (lbl !== lastLabel) {
+      tickIdxs.push(i);
+      lastLabel = lbl;
+    }
+  });
+
+  return (
+    <svg
+      ref={svgRef}
+      viewBox={`0 0 ${width} ${height}`}
+      width="100%"
+      height={height}
+      preserveAspectRatio="none"
+      style={{ display: "block", overflow: "visible", cursor: "crosshair" }}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+    >
+      <defs>
+        <linearGradient id="equityFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={lineColor} stopOpacity="0.38" />
+          <stop offset="100%" stopColor={lineColor} stopOpacity="0.04" />
+        </linearGradient>
+      </defs>
+
+      {/* $ scale with horizontal gridlines — on the right */}
+      {yTicks.map((v, i) => (
+        <g key={i}>
+          <line x1="0" y1={yAt(v)} x2={width - padRight} y2={yAt(v)} stroke={axisColor || COLORS.border} strokeWidth="1" />
+          <text x={width - padRight + 8} y={yAt(v) + 3.5} textAnchor="start" fontSize="10.5" fill={axisColor || COLORS.textMuted}>
+            {fmtAxis(v)}
+          </text>
+        </g>
+      ))}
+
+      {profitTarget !== null && !Number.isNaN(profitTarget) && (
+        <>
+          <line x1="0" y1={yAt(profitTarget)} x2={width - padRight} y2={yAt(profitTarget)} stroke={profitColor || COLORS.win} strokeWidth="1.5" strokeDasharray="6 4" />
+          <text x={width - padRight - 4} y={yAt(profitTarget) - 5} textAnchor="end" fontSize="11" fontWeight="700" fill={profitColor || COLORS.win}>
+            Profit target {fmtMoney(profitTarget)}
+          </text>
+        </>
+      )}
+      {(() => {
+        const minBalPts = points.map((p, i) => ({ i, v: p.minBalance })).filter((p) => p.v !== null && p.v !== undefined);
+        if (!minBalPts.length) return null;
+        const minBalPath = smoothPath(minBalPts.map((p) => ({ x: xAt(p.i), y: yAt(p.v) })));
+        const lastPt = minBalPts[minBalPts.length - 1];
+        return (
+          <>
+            <path d={minBalPath} fill="none" stroke={minBalanceColor || COLORS.loss} strokeWidth="1.5" strokeDasharray="6 4" />
+            <text x={width - padRight - 4} y={yAt(lastPt.v) + 18} textAnchor="end" fontSize="11" fontWeight="700" fill={minBalanceColor || COLORS.loss}>
+              Minimum balance {fmtMoney(lastPt.v)}
+            </text>
+          </>
+        );
+      })()}
+
+      <path d={areaPath} fill="url(#equityFill)" stroke="none" />
+      <path d={linePath} fill="none" stroke={lineColor} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={xAt(points.length - 1)} cy={yAt(last.balance)} r="4.5" fill={lineColor} />
+
+      {/* x-axis */}
+      <line x1="0" y1={height - padBottom + 10} x2={width - padRight} y2={height - padBottom + 10} stroke={axisColor || COLORS.border} strokeWidth="1" />
+      {tickIdxs.map((i) => {
+        const anchor = i === 0 ? "start" : i === dedupedPoints.length - 1 ? "end" : "middle";
+        const tx = xAt(i);
+        return (
+          <g key={i}>
+            <line x1={tx} y1={height - padBottom + 10} x2={tx} y2={height - padBottom + 14} stroke={axisColor || COLORS.border} strokeWidth="1" />
+            <text x={tx} y={height - 8} textAnchor={anchor} fontSize="10.5" fontWeight="500" fill={axisColor || COLORS.textMuted}>
+              {fmtTick(dedupedPoints[i].date)}
+            </text>
+          </g>
+        );
+      })}
+
+      {/* Hover: crosshair + tooltip showing the date, running balance, and max loss level */}
+      {hoverIdx !== null && (() => {
+        const hp = dedupedPoints[hoverIdx];
+        const hx = xAt(hoverIdx);
+        const hy = yAt(hp.balance);
+        const hasMaxLoss = hp.minBalance !== null && hp.minBalance !== undefined && !Number.isNaN(hp.minBalance);
+        const hoverDateLabel = hp.date ? new Date(hp.date + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
+        const boxW = 180, boxH = 20 + (hasMaxLoss ? 46 : 28);
+        const boxX = Math.min(Math.max(hx + 10, 0), width - boxW);
+        const boxY = Math.min(Math.max(hy - boxH - 10, padTop), height - padBottom - boxH);
+        return (
+          <g pointerEvents="none">
+            <line x1={hx} y1={padTop} x2={hx} y2={height - padBottom + 10} stroke={COLORS.textMuted} strokeWidth="1" strokeDasharray="3 3" />
+            <circle cx={hx} cy={hy} r="4.5" fill={lineColor} stroke={COLORS.card} strokeWidth="1.5" />
+            <rect x={boxX} y={boxY} width={boxW} height={boxH} rx="8" fill={COLORS.card} stroke={COLORS.border} strokeWidth="1" />
+            {hoverDateLabel && (
+              <text x={boxX + 10} y={boxY + 15} fontSize="10.5" fontWeight="700" fill={COLORS.text}>
+                {hoverDateLabel}
+              </text>
+            )}
+            <text x={boxX + 10} y={boxY + 33} fontSize="11" fontWeight="700" fill={COLORS.textMuted}>
+              Balance: {fmtMoney(hp.balance)}
+            </text>
+            {hasMaxLoss && (
+              <text x={boxX + 10} y={boxY + 50} fontSize="11" fontWeight="700" fill={COLORS.textMuted}>
+                Minimum balance: {fmtMoney(hp.minBalance)}
+              </text>
+            )}
+          </g>
+        );
+      })()}
+    </svg>
+  );
+}
+
+function EmptyState({ text }) {
+  return (
+    <div style={{ border: `1.5px dashed ${COLORS.border}`, borderRadius: 14, padding: "36px 16px", textAlign: "center", color: COLORS.textMuted, fontSize: 13.5, background: COLORS.subtleBg }}>
+      {text}
+    </div>
+  );
+}
+
+function inputStyle_() {
+  return {
+    background: COLORS.card,
+    border: `1.5px solid ${COLORS.border}`,
+    borderRadius: 9,
+    padding: "9px 12px",
+    color: COLORS.text,
+    fontSize: 14,
+    width: "100%",
+  };
+}
+
+function primaryBtnStyle_() {
+  return {
+    background: COLORS.accent,
+    color: "#fff",
+    border: "none",
+    borderRadius: 9,
+    padding: "10px 18px",
+    fontSize: 14,
+    fontWeight: 600,
+    cursor: "pointer",
+    justifySelf: "start",
+    boxShadow: "0 2px 6px rgba(124,92,252,0.35)",
+  };
+}
+
+function ghostBtnStyle_() {
+  return {
+    background: COLORS.card,
+    border: `1.5px solid ${COLORS.border}`,
+    color: COLORS.textMuted,
+    borderRadius: 8,
+    padding: "6px 12px",
+    fontSize: 12.5,
+    fontWeight: 500,
+    cursor: "pointer",
+  };
+}
+
+function deleteBtnStyle_() {
+  return {
+    background: "transparent",
+    border: "none",
+    color: COLORS.textMuted,
+    cursor: "pointer",
+    fontSize: 14,
+    padding: 4,
+  };
+}
+
+// ---- Auth screen (shown when there is no Supabase session) ----
+function AuthScreen() {
+  const [mode, setMode] = useState("login"); // 'login' | 'signup'
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [message, setMessage] = useState(null);
+
+  async function submit(e) {
+    e.preventDefault();
+    setError(null);
+    setMessage(null);
+    if (!email || !password) { setError("Enter an email and password."); return; }
+    setBusy(true);
+    try {
+      if (mode === "signup") {
+        const { error: err } = await supabaseClient.auth.signUp({ email, password });
+        if (err) throw err;
+        setMessage("Account created. Check your email to confirm it, then log in.");
+        setMode("login");
+      } else {
+        const { error: err } = await supabaseClient.auth.signInWithPassword({ email, password });
+        if (err) throw err;
+      }
+    } catch (err) {
+      setError(err.message || "Something went wrong.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={{ display: "flex", minHeight: "100vh", alignItems: "center", justifyContent: "center", background: COLORS.bg, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif" }}>
+      <form onSubmit={submit} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 32, width: "100%", maxWidth: 380, display: "grid", gap: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: COLORS.text, marginBottom: 4 }}>A+ Trades</div>
+          <div style={{ fontSize: 13, color: COLORS.textMuted }}>{mode === "signup" ? "Create your account" : "Log in to your account"}</div>
+        </div>
+        <Field label="Email">
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" style={inputStyle_()} autoComplete="email" />
+        </Field>
+        <Field label="Password">
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" style={inputStyle_()} autoComplete={mode === "signup" ? "new-password" : "current-password"} />
+        </Field>
+        {error && (
+          <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>{error}</div>
+        )}
+        {message && (
+          <div style={{ background: COLORS.winSoft, border: `1px solid ${COLORS.win}33`, color: COLORS.win, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>{message}</div>
+        )}
+        <button type="submit" disabled={busy} style={{ ...primaryBtnStyle_(), justifySelf: "stretch", textAlign: "center", opacity: busy ? 0.7 : 1 }}>
+          {busy ? "Please wait…" : mode === "signup" ? "Sign up" : "Log in"}
+        </button>
+        <button
+          type="button"
+          onClick={() => { setMode(mode === "signup" ? "login" : "signup"); setError(null); setMessage(null); }}
+          style={{ background: "transparent", border: "none", color: COLORS.accent, fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+        >
+          {mode === "signup" ? "Already have an account? Log in" : "New here? Create an account"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+// ---- Paywall (shown when the trial has expired and there's no active subscription) ----
+function Paywall({ status, onLogout, onSubscribe, checkoutBusy, checkoutError }) {
+  const label =
+    status === "past_due" ? "Your last payment didn't go through." :
+    status === "canceled" ? "Your subscription has ended." :
+    "Your free trial has ended.";
+  return (
+    <div style={{ display: "flex", minHeight: "100vh", alignItems: "center", justifyContent: "center", background: COLORS.bg, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif" }}>
+      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 32, width: "100%", maxWidth: 420, display: "grid", gap: 16, textAlign: "center", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+        <div style={{ fontSize: 20, fontWeight: 700, color: COLORS.text }}>A+ Trades</div>
+        <div style={{ fontSize: 14, color: COLORS.textMuted }}>{label} Subscribe to keep using A+ Trades.</div>
+        {checkoutError && (
+          <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>{checkoutError}</div>
+        )}
+        <button onClick={onSubscribe} disabled={checkoutBusy} style={{ ...primaryBtnStyle_(), justifySelf: "center", opacity: checkoutBusy ? 0.7 : 1 }}>
+          {checkoutBusy ? "Redirecting…" : "Subscribe"}
+        </button>
+        <button onClick={onLogout} style={{ background: "transparent", border: "none", color: COLORS.textMuted, fontSize: 13, cursor: "pointer" }}>
+          Log out
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TradeJournal({ session, onLogout }) {
+  const userId = session.user.id;
+  const [theme, setTheme] = useState(() => loadLocal(THEME_KEY, "light"));
+  applyTheme(theme); // mutate the shared COLORS object before anything below reads it
+
+  const [tab, setTab] = useState("trades");
+  const [trades, setTrades] = useState([]);
+  const [entries, setEntries] = useState([]);
+  const [targets, setTargets] = useState(() => rowToTargets(null));
+  const [dataLoading, setDataLoading] = useState(true);
+  const [saveError, setSaveError] = useState(null);
+  const [tradeFormError, setTradeFormError] = useState(null);
+  const [journalFormError, setJournalFormError] = useState(null);
+  const targetsSaveTimer = useRef(null);
+
+  const [tDate, setTDate] = useState(todayStr());
+  const [tPnl, setTPnl] = useState("");
+  const [tDur, setTDur] = useState("");
+  const [tSymbol, setTSymbol] = useState("");
+  const [tEntryType, setTEntryType] = useState("trade");
+  const [tSide, setTSide] = useState("long");
+  const [tRisk, setTRisk] = useState("");
+  const [tRR, setTRR] = useState("");
+  const [tGrade, setTGrade] = useState("");
+
+  const [sortKey, setSortKey] = useState("date");
+  const [tradesSubTab, setTradesSubTab] = useState("all");
+  const [sortDir, setSortDir] = useState("desc");
+
+  const now = new Date();
+  const [calMonth, setCalMonth] = useState(now.getMonth());
+  const [calYear, setCalYear] = useState(now.getFullYear());
+  const [perfRangeStart, setPerfRangeStart] = useState("");
+  const [perfRangeEnd, setPerfRangeEnd] = useState("");
+  const [quickRange, setQuickRange] = useState("");
+  const [selectedDay, setSelectedDay] = useState(null);
+  const [mediaModalTradeId, setMediaModalTradeId] = useState(null);
+  const [viewTradeId, setViewTradeId] = useState(null);
+  const [editingTradeId, setEditingTradeId] = useState(null);
+  const [editForm, setEditForm] = useState(null);
+
+  const [jDate, setJDate] = useState(todayStr());
+  const [jMood, setJMood] = useState("calm");
+  const [jConditions, setJConditions] = useState("");
+  const [jNotes, setJNotes] = useState("");
+  const [jFeelingDetail, setJFeelingDetail] = useState("");
+  const [jLinkedTradeId, setJLinkedTradeId] = useState("");
+
+  // ---- Load this user's data from Supabase on mount ----
+  async function reloadAllData() {
+    const [tradesRes, entriesRes, targetsRes, mediaRes] = await Promise.all([
+      supabaseClient.from("trades").select("*").order("date", { ascending: false }),
+      supabaseClient.from("journal_entries").select("*").order("date", { ascending: false }),
+      supabaseClient.from("targets").select("*").eq("user_id", userId).maybeSingle(),
+      supabaseClient.from("trade_media").select("*"),
+    ]);
+    if (tradesRes.error) throw tradesRes.error;
+    if (entriesRes.error) throw entriesRes.error;
+    if (targetsRes.error) throw targetsRes.error;
+    if (mediaRes.error) throw mediaRes.error;
+
+    const mediaByTrade = {};
+    (mediaRes.data || []).forEach((row) => {
+      const m = rowToMedia(row);
+      if (!mediaByTrade[m.tradeId]) mediaByTrade[m.tradeId] = [];
+      mediaByTrade[m.tradeId].push(m);
+    });
+    const loadedTrades = (tradesRes.data || []).map((row) => ({
+      ...rowToTrade(row),
+      media: mediaByTrade[row.id] || [],
+    }));
+
+    setTrades(loadedTrades);
+    setEntries((entriesRes.data || []).map(rowToEntry));
+    setTargets(rowToTargets(targetsRes.data));
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setDataLoading(true);
+      try {
+        await reloadAllData();
+        if (!cancelled) setSaveError(null);
+      } catch (e) {
+        if (!cancelled) setSaveError("Couldn't load your data — check your connection and refresh.");
+      } finally {
+        if (!cancelled) setDataLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [userId]);
+
+  useEffect(() => () => { if (targetsSaveTimer.current) clearTimeout(targetsSaveTimer.current); }, []);
+
+  function updateTargets(patch) {
+    const next = { ...targets, ...patch };
+    setTargets(next);
+    if (targetsSaveTimer.current) clearTimeout(targetsSaveTimer.current);
+    targetsSaveTimer.current = setTimeout(async () => {
+      const { error } = await supabaseClient.from("targets").upsert(targetsToRow(next, userId), { onConflict: "user_id" });
+      setSaveError(error ? "Couldn't save target settings." : null);
+    }, 500);
+  }
+
+  function toggleTheme() {
+    const next = theme === "light" ? "dark" : "light";
+    setTheme(next);
+    saveLocal(THEME_KEY, next);
+  }
+  useEffect(() => {
+    document.body.style.background = COLORS.bg;
+  }, [theme]);
+
+  if (dataLoading) {
+    return (
+      <div style={{ display: "flex", minHeight: "100vh", alignItems: "center", justifyContent: "center", background: COLORS.bg, color: COLORS.textMuted, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif" }}>
+        Loading your data…
+      </div>
+    );
+  }
+
+  async function addTrade(e) {
+    e.preventDefault();
+    setTradeFormError(null);
+    if (tDate === "") { setTradeFormError("Please pick a date."); return; }
+    if (tPnl === "" || Number.isNaN(Number(tPnl))) {
+      setTradeFormError(
+        tEntryType === "payout"
+          ? "Enter the payout amount, then click Add trade again."
+          : "P&L is empty — enter a number (e.g. -125 for a loss, 150 for a win), then click Add trade again."
+      );
+      return;
+    }
+    const draft = {
+      date: tDate,
+      pnl: tEntryType === "payout" ? -Math.abs(Number(tPnl)) : Number(tPnl),
+      duration: Number(tDur) || 0,
+      symbol: tSymbol.trim(),
+      side: tSide, risk: tRisk === "" ? null : Number(tRisk), rr: tRR === "" ? null : Number(tRR), grade: tGrade || null, entryType: tEntryType,
+    };
+    const { data, error } = await supabaseClient.from("trades").insert(tradeToRow(draft, userId)).select().single();
+    if (error) { setTradeFormError("Couldn't save the trade — try again."); return; }
+    const next = [{ ...rowToTrade(data), media: [] }, ...trades].sort((a, b) => (a.date < b.date ? 1 : -1));
+    setTrades(next);
+    setSaveError(null);
+    setTPnl(""); setTDur(""); setTSymbol("");
+    setTRisk(""); setTRR(""); setTSide("long"); setTGrade(""); setTEntryType("trade");
+  }
+
+  async function addEntry(e) {
+    e.preventDefault();
+    setJournalFormError(null);
+    if (jDate === "") { setJournalFormError("Please pick a date."); return; }
+    const draft = { date: jDate, mood: jMood, feelingDetail: jFeelingDetail.trim(), conditions: jConditions.trim(), notes: jNotes.trim(), tradeId: jLinkedTradeId || null };
+    const { data, error } = await supabaseClient.from("journal_entries").insert(entryToRow(draft, userId)).select().single();
+    if (error) { setJournalFormError("Couldn't save the entry — try again."); return; }
+    const next = [rowToEntry(data), ...entries].sort((a, b) => (a.date < b.date ? 1 : -1));
+    setEntries(next);
+    setJConditions(""); setJNotes(""); setJFeelingDetail(""); setJLinkedTradeId("");
+  }
+
+  async function deleteTrade(id) {
+    const t = trades.find((tr) => tr.id === id);
+    if (t && t.media && t.media.length) {
+      try { await removeMediaFiles(t.media.map((m) => m.storagePath)); } catch (e) { /* best-effort cleanup */ }
+    }
+    const { error } = await supabaseClient.from("trades").delete().eq("id", id);
+    if (error) { setSaveError("Couldn't delete the trade — try again."); return; }
+    setTrades(trades.filter((tr) => tr.id !== id));
+    setSaveError(null);
+  }
+  async function deleteEntry(id) {
+    const { error } = await supabaseClient.from("journal_entries").delete().eq("id", id);
+    if (error) { setSaveError("Couldn't delete the entry — try again."); return; }
+    setEntries(entries.filter((en) => en.id !== id));
+    setSaveError(null);
+  }
+
+  function openEditTrade(t) {
+    setEditingTradeId(t.id);
+    setEditForm({
+      date: t.date,
+      symbol: t.symbol || "",
+      side: t.side || "long",
+      pnl: t.pnl === null || t.pnl === undefined ? "" : String(t.pnl),
+      duration: t.duration === null || t.duration === undefined ? "" : String(t.duration),
+      risk: t.risk === null || t.risk === undefined ? "" : String(t.risk),
+      rr: t.rr === null || t.rr === undefined ? "" : String(t.rr),
+      grade: t.grade || "",
+      error: null,
+    });
+  }
+  async function saveEditedTrade() {
+    if (!editForm.date) { setEditForm({ ...editForm, error: "Please pick a date." }); return; }
+    if (editForm.pnl === "" || Number.isNaN(Number(editForm.pnl))) {
+      setEditForm({ ...editForm, error: "P&L is empty — enter a number." });
+      return;
+    }
+    const current = trades.find((t) => t.id === editingTradeId);
+    const patch = {
+      date: editForm.date,
+      symbol: editForm.symbol.trim() || null,
+      side: current.entryType === "payout" ? null : editForm.side,
+      pnl: current.entryType === "payout" ? -Math.abs(Number(editForm.pnl)) : Number(editForm.pnl),
+      duration: Number(editForm.duration) || 0,
+      risk: editForm.risk === "" ? null : Number(editForm.risk),
+      rr: editForm.rr === "" ? null : Number(editForm.rr),
+      grade: editForm.grade || null,
+    };
+    const { error } = await supabaseClient.from("trades").update(patch).eq("id", editingTradeId);
+    if (error) { setEditForm({ ...editForm, error: "Couldn't save changes — try again." }); return; }
+    const next = trades.map((t) => (t.id === editingTradeId ? {
+      ...t,
+      date: patch.date,
+      symbol: patch.symbol || "",
+      side: patch.side || t.side,
+      pnl: patch.pnl,
+      duration: patch.duration,
+      risk: patch.risk,
+      rr: patch.rr,
+      grade: patch.grade,
+    } : t));
+    setTrades(next);
+    setEditingTradeId(null);
+    setEditForm(null);
+  }
+
+  async function addMediaFiles(tradeId, files) {
+    const newMedia = [];
+    for (const f of files) {
+      const pathId = uid();
+      const path = mediaPath(userId, tradeId, pathId, f.name);
+      const type = f.type.startsWith("video/") ? "video" : "image";
+      try {
+        await uploadMediaFile(path, f);
+        const { data, error } = await supabaseClient.from("trade_media").insert({
+          trade_id: tradeId, user_id: userId, storage_path: path, type, name: f.name,
+        }).select().single();
+        if (error) throw error;
+        newMedia.push(rowToMedia(data));
+      } catch (e) {
+        setSaveError("Couldn't save one or more files — they may be too large, or an unsupported type.");
+      }
+    }
+    if (newMedia.length) {
+      const next = trades.map((t) => (t.id === tradeId ? { ...t, media: [...(t.media || []), ...newMedia] } : t));
+      setTrades(next);
+    }
+  }
+
+  async function deleteMediaItem(tradeId, mediaId) {
+    const t = trades.find((tr) => tr.id === tradeId);
+    const m = t && (t.media || []).find((mm) => mm.id === mediaId);
+    try { if (m) await removeMediaFiles([m.storagePath]); } catch (e) { /* ignore storage cleanup failure */ }
+    const { error } = await supabaseClient.from("trade_media").delete().eq("id", mediaId);
+    if (error) { setSaveError("Couldn't delete media — try again."); return; }
+    const next = trades.map((t) => (t.id === tradeId ? { ...t, media: (t.media || []).filter((m2) => m2.id !== mediaId) } : t));
+    setTrades(next);
+  }
+
+  function exportData() {
+    const payload = {
+      trades: trades.map(({ media, ...rest }) => rest),
+      entries,
+      exportedAt: new Date().toISOString(),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `trading-journal-backup-${todayStr()}.json`; a.click();
+    URL.revokeObjectURL(url);
+  }
+  function importData(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      let data;
+      try {
+        data = JSON.parse(reader.result);
+      } catch (err) {
+        setSaveError("That file doesn't look like a valid backup.");
+        return;
+      }
+      try {
+        const oldTrades = Array.isArray(data.trades) ? data.trades : [];
+        const oldEntries = Array.isArray(data.entries) ? data.entries : [];
+        const idMap = {};
+
+        if (oldTrades.length) {
+          const rows = oldTrades.map((t) => tradeToRow(t, userId));
+          const { data: inserted, error } = await supabaseClient.from("trades").insert(rows).select();
+          if (error) throw error;
+          oldTrades.forEach((t, i) => { idMap[t.id] = inserted[i].id; });
+        }
+        if (oldEntries.length) {
+          const rows = oldEntries.map((en) => entryToRow({ ...en, tradeId: en.tradeId ? (idMap[en.tradeId] || null) : null }, userId));
+          const { error } = await supabaseClient.from("journal_entries").insert(rows);
+          if (error) throw error;
+        }
+        await reloadAllData();
+        setSaveError(null);
+      } catch (err) {
+        setSaveError("Import failed partway through — check your connection and try again.");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  }
+
+  const tradingOnly = trades.filter((t) => t.entryType !== "payout");
+  const totalPnl = tradingOnly.reduce((s, t) => s + t.pnl, 0);
+  const wins = tradingOnly.filter((t) => t.pnl > 0).length;
+  const losses = tradingOnly.filter((t) => t.pnl < 0).length;
+  const winRate = tradingOnly.length ? Math.round((wins / tradingOnly.length) * 100) : 0;
+  const avgDuration = tradingOnly.length ? Math.round(tradingOnly.reduce((s, t) => s + t.duration, 0) / tradingOnly.length) : 0;
+  const grossWin = tradingOnly.filter(t => t.pnl > 0).reduce((s,t)=>s+t.pnl,0);
+  const grossLoss = Math.abs(tradingOnly.filter(t => t.pnl < 0).reduce((s,t)=>s+t.pnl,0));
+  const profitFactor = grossLoss > 0 ? (grossWin / grossLoss) : (grossWin > 0 ? Infinity : 0);
+
+  const moodInfo = (key) => MOODS.find((m) => m.key === key) || MOODS[MOODS.length - 1];
+
+  const tradeNumberMap = new Map(
+    [...trades]
+      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.id < b.id ? -1 : 1)))
+      .map((t, i) => [t.id, i + 1])
+  );
+
+  const linkableTrades = [...trades].sort((a, b) => (a.date < b.date ? 1 : -1));
+  function tradeLabel(t) {
+    return `#${tradeNumberMap.get(t.id)} · ${t.date} · ${t.symbol || "—"} · ${fmtMoney(t.pnl)}`;
+  }
+  function findTrade(id) {
+    return trades.find((t) => t.id === id) || null;
+  }
+
+  const patternStats = Object.values(
+    entries.reduce((acc, en) => {
+      if (!en.tradeId) return acc;
+      const t = findTrade(en.tradeId);
+      if (!t) return acc;
+      const key = en.mood || "flat";
+      if (!acc[key]) {
+        const mi = MOODS.find((m) => m.key === key) || MOODS[MOODS.length - 1];
+        acc[key] = { moodKey: key, label: mi.label, color: mi.color, count: 0, total: 0, wins: 0, durationSum: 0 };
+      }
+      acc[key].count += 1; acc[key].total += t.pnl;
+      if (t.pnl > 0) acc[key].wins += 1;
+      acc[key].durationSum += t.duration;
+      return acc;
+    }, {})
+  ).map((p) => ({ ...p, winRate: Math.round((p.wins / p.count) * 100), avg: p.total / p.count, avgDuration: Math.round(p.durationSum / p.count) }))
+   .sort((a, b) => b.total - a.total);
+
+  const bestPattern = patternStats[0];
+  const worstPattern = patternStats[patternStats.length - 1];
+
+  // ---- Calendar: group trades by date, build week rows with a trailing Total column ----
+  const dayMap = trades.reduce((acc, t) => {
+    if (!acc[t.date]) acc[t.date] = { total: 0, count: 0, wins: 0, payoutTotal: 0 };
+    if (t.entryType === "payout") {
+      acc[t.date].payoutTotal += t.pnl;
+    } else {
+      acc[t.date].total += t.pnl;
+      acc[t.date].count += 1;
+      if (t.pnl > 0) acc[t.date].wins += 1;
+    }
+    return acc;
+  }, {});
+
+  function pad2(n) { return String(n).padStart(2, "0"); }
+  function buildCalendarWeeks(year, month) {
+    const firstOfMonth = new Date(year, month, 1);
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const startWeekday = firstOfMonth.getDay(); // 0 = Sun
+    const cells = [];
+    for (let i = 0; i < startWeekday; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = `${year}-${pad2(month + 1)}-${pad2(d)}`;
+      cells.push({ day: d, dateStr, data: dayMap[dateStr] || null });
+    }
+    while (cells.length % 7 !== 0) cells.push(null);
+    const weeks = [];
+    for (let i = 0; i < cells.length; i += 7) {
+      const weekCells = cells.slice(i, i + 7);
+      const weekTotal = weekCells.reduce((s, c) => s + (c && c.data ? c.data.total : 0), 0);
+      const weekPayoutTotal = weekCells.reduce((s, c) => s + (c && c.data ? c.data.payoutTotal : 0), 0);
+      const weekTradeCount = weekCells.reduce((s, c) => s + (c && c.data ? c.data.count : 0), 0);
+      weeks.push({ cells: weekCells, total: weekTotal, payoutTotal: weekPayoutTotal, tradeCount: weekTradeCount });
+    }
+    return weeks;
+  }
+  const calendarWeeks = buildCalendarWeeks(calYear, calMonth);
+  const firstEntryDate = trades.length ? [...trades].sort((a, b) => (a.date < b.date ? -1 : 1))[0].date : null;
+  const firstEntryYear = firstEntryDate ? Number(firstEntryDate.slice(0, 4)) : null;
+  const firstEntryMonth = firstEntryDate ? Number(firstEntryDate.slice(5, 7)) - 1 : null;
+  const atEarliestMonth = firstEntryDate !== null && (calYear < firstEntryYear || (calYear === firstEntryYear && calMonth <= firstEntryMonth));
+  const monthLabel = new Date(calYear, calMonth, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+
+  // ---- Account size: running balance starting at 0, one point per calendar day (evenly spaced) ----
+  function nextDay(dateStr) {
+    const d = new Date(dateStr + "T00:00:00");
+    d.setDate(d.getDate() + 1);
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  }
+  function prevDay(dateStr) {
+    const d = new Date(dateStr + "T00:00:00");
+    d.setDate(d.getDate() - 1);
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  }
+  function applyQuickRange(preset) {
+    setQuickRange(preset);
+    if (!preset) return;
+    const end = new Date();
+    const start = new Date();
+    if (preset === "1d") start.setDate(end.getDate() - 1);
+    else if (preset === "1w") start.setDate(end.getDate() - 7);
+    else if (preset === "1m") start.setMonth(end.getMonth() - 1);
+    else if (preset === "6m") start.setMonth(end.getMonth() - 6);
+    else if (preset === "1y") start.setFullYear(end.getFullYear() - 1);
+    const fmtLocal = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+    setPerfRangeStart(fmtLocal(start));
+    setPerfRangeEnd(fmtLocal(end));
+  }
+  const chronoTradesAll = [...trades].sort((a, b) => (a.date > b.date ? 1 : a.date < b.date ? -1 : 0));
+  const chronoTrades = chronoTradesAll.filter((t) => {
+    if (perfRangeStart && t.date < perfRangeStart) return false;
+    if (perfRangeEnd && t.date > perfRangeEnd) return false;
+    return true;
+  });
+  const dayStart = perfRangeStart || (chronoTrades[0] ? chronoTrades[0].date : null);
+  const dayEnd = perfRangeEnd || (chronoTrades.length ? chronoTrades[chronoTrades.length - 1].date : null);
+  const maxLossNumForCurve = targets.maxLoss === "" ? null : Number(targets.maxLoss);
+  function isWeekend(dateStr) {
+    const wd = new Date(dateStr + "T00:00:00").getDay();
+    return wd === 0 || wd === 6;
+  }
+  const equityCurve = [];
+  if (dayStart && dayEnd) {
+    const dayPnl = {};
+    chronoTrades.forEach((t) => { dayPnl[t.date] = (dayPnl[t.date] || 0) + t.pnl; });
+    equityCurve.push({ date: prevDay(dayStart), balance: 0, minBalance: null });
+    let running = 0;
+    let peakToDate = 0;
+    let cur = dayStart;
+    let guard = 0;
+    while (cur <= dayEnd && guard < 5000) {
+      running += dayPnl[cur] || 0;
+      peakToDate = Math.max(peakToDate, running);
+      if (!isWeekend(cur) || dayPnl[cur] !== undefined) {
+        const minBalance = maxLossNumForCurve !== null ? peakToDate - Math.abs(maxLossNumForCurve) : null;
+        equityCurve.push({ date: cur, balance: running, minBalance });
+      }
+      if (cur === dayEnd) break;
+      cur = nextDay(cur);
+      guard++;
+    }
+  }
+  const currentBalance = equityCurve.length ? equityCurve[equityCurve.length - 1].balance : 0;
+  const peakBalance = Math.max(0, ...equityCurve.map((p) => p.balance));
+  const troughBalance = Math.min(0, ...equityCurve.map((p) => p.balance));
+  const drawdownRecovered = currentBalance > Math.abs(troughBalance);
+  const displayDrawdown = drawdownRecovered ? 0 : troughBalance;
+
+  const profitTargetNum = targets.profitTarget === "" ? null : Number(targets.profitTarget);
+  const maxLossNum = targets.maxLoss === "" ? null : Number(targets.maxLoss);
+  // Minimum Balance floor: always trails the peak by the Max Loss amount (e.g. max loss $2,000,
+  // peak +$2,500 -> minimum balance $500). Ratchets up automatically as the peak grows.
+  const maxLossLevel = maxLossNum !== null ? peakBalance - Math.abs(maxLossNum) : null;
+  const profitTargetHit = profitTargetNum !== null && currentBalance >= profitTargetNum;
+  const maxLossHit = maxLossLevel !== null && currentBalance <= maxLossLevel;
+
+  const navItems = [
+    { key: "calendar", label: "Performance", Icon: IconCalendar },
+    { key: "patterns", label: "Patterns", Icon: IconPatterns },
+    { key: "journal", label: "Journal", Icon: IconJournal },
+  ];
+
+  return (
+    <div style={{ display: "flex", minHeight: "100vh", background: COLORS.bg, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif", color: COLORS.text }}>
+
+      {/* Sidebar */}
+      <div className="sidebar" style={{ width: 220, minWidth: 220, background: COLORS.sidebar, display: "flex", flexDirection: "column", padding: "22px 14px", position: "sticky", top: 0, height: "100vh", gap: 24 }}>
+        <div className="logo-block" style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 8px" }}>
+          <span style={{ color: "#fff", fontWeight: 700, fontSize: 15, letterSpacing: "-0.01em" }}>A+ Trades</span>
+        </div>
+        <button
+          onClick={() => setTab("trades")}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+            background: COLORS.accent, color: "#fff", border: "none", borderRadius: 10,
+            padding: "12px 14px", fontSize: 14, fontWeight: 700, cursor: "pointer",
+            boxShadow: tab === "trades" ? "0 0 0 2px rgba(255,255,255,0.55), 0 2px 8px rgba(124,92,252,0.45)" : "0 2px 8px rgba(124,92,252,0.45)",
+          }}
+        >
+          <span style={{ fontSize: 17, lineHeight: 1 }}>+</span> Add Trade
+        </button>
+        <nav style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {navItems.map(({ key, label, Icon }) => {
+            const active = tab === key;
+            return (
+              <button
+                key={key}
+                onClick={() => setTab(key)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  background: active ? COLORS.sidebarActive : "transparent",
+                  color: active ? "#fff" : "#9599B0",
+                  border: "none", borderRadius: 10, padding: "10px 12px",
+                  fontSize: 13.5, fontWeight: 600, cursor: "pointer", textAlign: "left",
+                }}
+              >
+                <Icon active={active} />
+                {label}
+              </button>
+            );
+          })}
+        </nav>
+
+        <button
+          onClick={toggleTheme}
+          style={{
+            marginTop: "auto",
+            display: "flex", alignItems: "center", gap: 8,
+            background: "rgba(255,255,255,0.06)", color: "#C7CAD6",
+            border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10,
+            padding: "9px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "left",
+          }}
+        >
+          <span style={{ fontSize: 14 }}>{theme === "light" ? "🌙" : "☀️"}</span>
+          {theme === "light" ? "Dark mode" : "Light mode"}
+        </button>
+        <button
+          onClick={onLogout}
+          style={{
+            display: "flex", alignItems: "center", gap: 8,
+            background: "rgba(255,255,255,0.06)", color: "#C7CAD6",
+            border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10,
+            padding: "9px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "left",
+          }}
+        >
+          <span style={{ fontSize: 14 }}>⎋</span> Log out
+        </button>
+      </div>
+
+      {/* Main content */}
+      <div className="main-content" style={{ flex: 1, padding: "28px 32px 60px", width: "100%" }}>
+        <header style={{ marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <h1 style={{ fontSize: 24, margin: 0, fontWeight: 700, letterSpacing: "-0.01em" }}>
+              {tab === "trades" ? "Trades" : tab === "calendar" ? "Performance" : tab === "patterns" ? "Patterns" : "Journal"}
+            </h1>
+            <div style={{ fontSize: 13, color: COLORS.textMuted, marginTop: 2 }}>
+              {tab === "trades" ? "Log and review every trade" : tab === "calendar" ? "Account growth and daily/weekly P&L" : tab === "patterns" ? "How you perform by how you felt" : "Track how you felt and why"}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={exportData} style={ghostBtnStyle_()}>Export</button>
+            <label style={{ ...ghostBtnStyle_(), cursor: "pointer" }}>
+              Import
+              <input type="file" accept="application/json" onChange={importData} style={{ display: "none" }} />
+            </label>
+          </div>
+        </header>
+
+        {saveError && (
+          <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13, marginBottom: 18 }}>
+            {saveError}
+          </div>
+        )}
+
+        {tab === "trades" ? (
+          <>
+            <form onSubmit={addTrade} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+              <div style={{ fontSize: 13, color: COLORS.text, fontWeight: 700 }}>Log a trade</div>
+              <div style={{ display: "flex", gap: 6 }}>
+                {[{ v: "trade", label: "Trade" }, { v: "payout", label: "Payouts" }].map((opt) => (
+                  <button
+                    type="button"
+                    key={opt.v}
+                    onClick={() => setTEntryType(opt.v)}
+                    style={{
+                      background: tEntryType === opt.v ? (opt.v === "payout" ? COLORS.payout + "1A" : COLORS.accentSoft) : COLORS.subtleBg,
+                      border: `1.5px solid ${tEntryType === opt.v ? (opt.v === "payout" ? COLORS.payout : COLORS.accent) : COLORS.border}`,
+                      color: tEntryType === opt.v ? (opt.v === "payout" ? COLORS.payout : COLORS.accent) : COLORS.textMuted,
+                      padding: "6px 14px", borderRadius: 20, fontSize: 12.5, fontWeight: 600, cursor: "pointer",
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                <Field label="Date" style={{ flex: "1 1 140px" }}>
+                  <input type="date" value={tDate} onChange={(e) => setTDate(e.target.value)} style={inputStyle_()} />
+                </Field>
+                {tEntryType === "trade" && (
+                  <Field label="Symbol (optional)" style={{ flex: "1 1 120px" }}>
+                    <input type="text" value={tSymbol} onChange={(e) => setTSymbol(e.target.value)} placeholder="ES, AAPL…" style={inputStyle_()} />
+                  </Field>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                <Field label={tEntryType === "payout" ? "Value ($)" : "P&L ($)"} style={{ flex: "1 1 140px" }}>
+                  <input
+                    type="number" step="0.01" min={tEntryType === "payout" ? "0" : undefined} value={tPnl} onChange={(e) => setTPnl(e.target.value)}
+                    placeholder="Enter amount…" className="mono"
+                    style={{ ...inputStyle_(), border: tradeFormError && tPnl === "" ? `1.5px solid ${COLORS.loss}` : inputStyle_().border }}
+                  />
+                </Field>
+                {tEntryType === "trade" && (
+                  <Field label="Duration (min)" style={{ flex: "1 1 140px" }}>
+                    <input type="number" min="0" value={tDur} onChange={(e) => setTDur(e.target.value)} placeholder="45" style={inputStyle_()} className="mono" />
+                  </Field>
+                )}
+              </div>
+              {tEntryType === "trade" && (
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  <Field label="Side" style={{ flex: "1 1 110px" }}>
+                    <select value={tSide} onChange={(e) => setTSide(e.target.value)} style={inputStyle_()}>
+                      <option value="long">Long</option>
+                      <option value="short">Short</option>
+                    </select>
+                  </Field>
+                  <Field label="Risk (%)" style={{ flex: "1 1 90px" }}>
+                    <input type="number" step="0.1" min="0" value={tRisk} onChange={(e) => setTRisk(e.target.value)} placeholder="—" style={inputStyle_()} className="mono" />
+                  </Field>
+                  <Field label="R:R" style={{ flex: "1 1 90px" }}>
+                    <input type="number" step="0.01" min="0" value={tRR} onChange={(e) => setTRR(e.target.value)} placeholder="e.g. 2.50" style={inputStyle_()} className="mono" />
+                  </Field>
+                  <Field label="Grade" style={{ flex: "1 1 90px" }}>
+                    <select value={tGrade} onChange={(e) => setTGrade(e.target.value)} style={inputStyle_()}>
+                      <option value="">—</option>
+                      {GRADES.slice().reverse().map((g) => (
+                        <option key={g} value={g}>{g}</option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+              )}
+              {tradeFormError && (
+                <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>
+                  {tradeFormError}
+                </div>
+              )}
+              <button type="submit" style={primaryBtnStyle_()}>{tEntryType === "payout" ? "Add payout" : "Add trade"}</button>
+            </form>
+
+            <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+              {[{ v: "all", label: "All" }, { v: "trades", label: "Trades" }, { v: "payouts", label: "Payouts" }].map((opt) => (
+                <button
+                  key={opt.v}
+                  onClick={() => setTradesSubTab(opt.v)}
+                  style={{
+                    background: tradesSubTab === opt.v ? COLORS.accentSoft : "transparent",
+                    border: `1.5px solid ${tradesSubTab === opt.v ? COLORS.accent : COLORS.border}`,
+                    color: tradesSubTab === opt.v ? COLORS.accent : COLORS.textMuted,
+                    padding: "6px 14px", borderRadius: 20, fontSize: 12.5, fontWeight: 600, cursor: "pointer",
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+
+            {(() => {
+              const visibleTrades =
+                tradesSubTab === "trades" ? trades.filter((t) => t.entryType !== "payout") :
+                tradesSubTab === "payouts" ? trades.filter((t) => t.entryType === "payout") :
+                trades;
+
+              if (visibleTrades.length === 0) {
+                return (
+                  <EmptyState text={
+                    tradesSubTab === "payouts" ? "No payouts logged yet." :
+                    tradesSubTab === "trades" ? "No trades logged yet." :
+                    "No trades logged yet. Add your first one above."
+                  } />
+                );
+              }
+
+              const isPayoutView = tradesSubTab === "payouts";
+              return (
+                (() => {
+                const columns = isPayoutView ? [
+                  { key: "date", label: "Date" },
+                  { key: "pnl", label: "Amount" },
+                ] : [
+                  { key: "date", label: "Date" },
+                  { key: "symbol", label: "Symbol" },
+                  { key: "side", label: "Side" },
+                  { key: "risk", label: "Risk" },
+                  { key: "rr", label: "R:R" },
+                  { key: "duration", label: "Duration" },
+                  { key: "grade", label: "Grade" },
+                  { key: "pnl", label: "P&L" },
+                ];
+                function sortVal(t, key) {
+                  const v = t[key];
+                  if (key === "symbol" || key === "side" || key === "pattern") return (v || "").toLowerCase();
+                  if (key === "grade") return v ? GRADE_RANK[v] : -1;
+                  return v === null || v === undefined ? -Infinity : Number(v) || (key === "date" ? t.date : 0);
+                }
+                const sorted = [...visibleTrades].sort((a, b) => {
+                  let av = sortKey === "date" ? a.date : sortVal(a, sortKey);
+                  let bv = sortKey === "date" ? b.date : sortVal(b, sortKey);
+                  if (av < bv) return sortDir === "asc" ? -1 : 1;
+                  if (av > bv) return sortDir === "asc" ? 1 : -1;
+                  return 0;
+                });
+                function headerClick(key) {
+                  if (sortKey === key) setSortDir(sortDir === "asc" ? "desc" : "asc");
+                  else { setSortKey(key); setSortDir("desc"); }
+                }
+                return (
+                  <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, overflow: "hidden", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                        <thead>
+                          <tr style={{ background: COLORS.subtleBg, borderBottom: `1px solid ${COLORS.border}` }}>
+                            <th style={{ textAlign: "left", padding: "10px 14px", fontWeight: 600, color: COLORS.textMuted, whiteSpace: "nowrap" }}>#</th>
+                            {columns.map((c) => (
+                              <th
+                                key={c.key}
+                                onClick={() => headerClick(c.key)}
+                                style={{
+                                  textAlign: c.key === "pnl" ? "right" : "left",
+                                  padding: "10px 14px",
+                                  fontWeight: 600,
+                                  color: sortKey === c.key ? COLORS.accent : COLORS.textMuted,
+                                  cursor: "pointer",
+                                  userSelect: "none",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {c.label}{sortKey === c.key ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
+                              </th>
+                            ))}
+                            <th style={{ padding: "10px 14px", textAlign: "left", fontWeight: 600, color: COLORS.textMuted, whiteSpace: "nowrap" }}>Media</th>
+                            <th style={{ padding: "10px 14px" }}></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sorted.map((t) => (
+                            <tr key={t.id} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+                              <td className="mono" style={{ padding: "10px 14px", color: COLORS.textMuted, whiteSpace: "nowrap" }}>#{tradeNumberMap.get(t.id)}</td>
+                              <td className="mono" style={{ padding: "10px 14px", color: COLORS.textMuted, whiteSpace: "nowrap" }}>{t.date}</td>
+                              {!isPayoutView && (
+                                <>
+                                  <td style={{ padding: "10px 14px", fontWeight: 600, whiteSpace: "nowrap" }}>{t.symbol || "—"}</td>
+                                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
+                                    <span style={{
+                                      fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 6,
+                                      color: t.entryType === "payout" ? COLORS.payout : (t.side === "short" ? COLORS.loss : COLORS.win),
+                                      background: t.entryType === "payout" ? COLORS.payoutSoft : (t.side === "short" ? COLORS.lossSoft : COLORS.winSoft),
+                                    }}>
+                                      {t.entryType === "payout" ? "PAYOUT" : (t.side === "short" ? "SHORT" : "LONG")}
+                                    </span>
+                                  </td>
+                                  <td className="mono" style={{ padding: "10px 14px", color: COLORS.textMuted, whiteSpace: "nowrap" }}>
+                                    {t.risk !== null && t.risk !== undefined ? `${t.risk}%` : "—"}
+                                  </td>
+                                  <td className="mono" style={{ padding: "10px 14px", color: COLORS.textMuted, whiteSpace: "nowrap" }}>
+                                    {t.rr !== null && t.rr !== undefined ? `${t.rr}R` : "—"}
+                                  </td>
+                                  <td className="mono" style={{ padding: "10px 14px", color: COLORS.textMuted, whiteSpace: "nowrap" }}>{fmtDuration(t.duration)}</td>
+                                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
+                                    {t.grade ? (
+                                      <span className="mono" style={{
+                                        fontSize: 11.5, fontWeight: 700, padding: "2px 9px", borderRadius: 6,
+                                        color: gradeColor(t.grade), background: gradeColor(t.grade) + "18",
+                                        border: `1px solid ${gradeColor(t.grade)}40`,
+                                      }}>
+                                        {t.grade}
+                                      </span>
+                                    ) : "—"}
+                                  </td>
+                                </>
+                              )}
+                              <td className="mono" style={{ padding: "10px 14px", textAlign: "right", fontWeight: 700, whiteSpace: "nowrap", color: pnlColor(t) }}>
+                                {isPayoutView
+                                  ? `$${Math.abs(t.pnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                  : fmtMoney(t.pnl)}
+                              </td>
+                              <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
+                                <button
+                                  onClick={() => setMediaModalTradeId(t.id)}
+                                  style={{
+                                    display: "inline-flex", alignItems: "center", gap: 5,
+                                    background: (t.media || []).length ? COLORS.accentSoft : "transparent",
+                                    border: `1px solid ${(t.media || []).length ? COLORS.accent + "33" : COLORS.border}`,
+                                    color: (t.media || []).length ? COLORS.accent : COLORS.textMuted,
+                                    borderRadius: 20, padding: "3px 10px", fontSize: 11.5, fontWeight: 600, cursor: "pointer",
+                                  }}
+                                >
+                                  📎 {(t.media || []).length || "Add"}
+                                </button>
+                              </td>
+                              <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
+                                <button onClick={() => openEditTrade(t)} style={{ ...deleteBtnStyle_(), marginRight: 4 }} aria-label="Edit trade">✎</button>
+                                <button onClick={() => deleteTrade(t.id)} style={deleteBtnStyle_()} aria-label="Delete trade">✕</button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()
+              );
+            })()}
+          </>
+        ) : tab === "calendar" ? (
+          <>
+            <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
+              <StatCard label="Total P&L" value={fmtMoney(totalPnl)} color={totalPnl >= 0 ? COLORS.win : COLORS.loss} />
+              <StatCard label="Win rate" value={`${winRate}%`} />
+              <StatCard label="Profit factor" value={profitFactor === Infinity ? "∞" : profitFactor.toFixed(2)} />
+              <StatCard label="Avg duration" value={fmtDuration(avgDuration)} />
+            </div>
+
+            {/* Targets (left) + Account size / equity (right) — top half of the page */}
+            <div className="perf-top" style={{ display: "flex", gap: 16, marginBottom: 28, alignItems: "stretch" }}>
+
+              {/* Targets panel */}
+              <div className="perf-targets" style={{ width: 240, flexShrink: 0, background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 18, boxShadow: "0 1px 2px rgba(23,21,51,0.04)", display: "flex", flexDirection: "column", gap: 16 }}>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>Targets</div>
+
+                {/* Profit target */}
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <label style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600 }}>Profit target</label>
+                    {profitTargetHit && <span style={{ fontSize: 11, color: COLORS.win, fontWeight: 700 }}>Hit! 🎯</span>}
+                  </div>
+                  <input
+                    type="number" step="0.01" min="0"
+                    value={targets.profitTarget}
+                    onChange={(e) => updateTargets({ profitTarget: e.target.value })}
+                    placeholder="$0.00"
+                    className="mono"
+                    style={{ ...inputStyle_() }}
+                  />
+                </div>
+
+                {/* Max loss */}
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <label style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600 }}>Max loss</label>
+                    {maxLossHit && <span style={{ fontSize: 11, color: COLORS.loss, fontWeight: 700 }}>Hit! ⛔</span>}
+                  </div>
+                  <input
+                    type="number" step="0.01" min="0"
+                    value={targets.maxLoss}
+                    onChange={(e) => updateTargets({ maxLoss: e.target.value })}
+                    placeholder="$0.00"
+                    className="mono"
+                    style={{ ...inputStyle_() }}
+                  />
+                </div>
+
+                {/* Axis */}
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Axis</div>
+                  <label style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600, display: "block", marginBottom: 6 }}>$ spacing</label>
+                  <input
+                    type="number" step="1" min="0"
+                    value={targets.axisStep || ""}
+                    onChange={(e) => updateTargets({ axisStep: e.target.value })}
+                    placeholder="Auto"
+                    className="mono"
+                    style={{ ...inputStyle_(), marginBottom: 10 }}
+                  />
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 12, color: COLORS.textMuted }}>Color</span>
+                    <input
+                      type="color"
+                      value={targets.axisColor || "#8B8FA3"}
+                      onChange={(e) => updateTargets({ axisColor: e.target.value })}
+                      style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
+                    />
+                  </div>
+                  {(targets.axisStep || targets.axisColor) && (
+                    <button
+                      type="button"
+                      onClick={() => updateTargets({ axisStep: "", axisColor: "" })}
+                      style={{ ...ghostBtnStyle_(), fontSize: 11, padding: "4px 10px", width: "100%", marginTop: 10 }}
+                    >
+                      Reset axis
+                    </button>
+                  )}
+                </div>
+
+                {/* Colors */}
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Colors</div>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontSize: 12, color: COLORS.textMuted }}>Growth curve</span>
+                      <input
+                        type="color"
+                        value={targets.growthColor || "#7C5CFC"}
+                        onChange={(e) => updateTargets({ growthColor: e.target.value })}
+                        style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
+                      />
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontSize: 12, color: COLORS.textMuted }}>Profit target</span>
+                      <input
+                        type="color"
+                        value={targets.profitColor || "#16A34A"}
+                        onChange={(e) => updateTargets({ profitColor: e.target.value })}
+                        style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
+                      />
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontSize: 12, color: COLORS.textMuted }}>Minimum balance</span>
+                      <input
+                        type="color"
+                        value={targets.minBalanceColor || "#E23D45"}
+                        onChange={(e) => updateTargets({ minBalanceColor: e.target.value })}
+                        style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
+                      />
+                    </div>
+                    {(targets.growthColor || targets.profitColor !== "#16A34A" || targets.minBalanceColor !== "#E23D45") && (
+                      <button
+                        type="button"
+                        onClick={() => updateTargets({ growthColor: "", profitColor: "#16A34A", minBalanceColor: "#E23D45" })}
+                        style={{ ...ghostBtnStyle_(), fontSize: 11, padding: "4px 10px" }}
+                      >
+                        Reset colors
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Calendar */}
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Calendar</div>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontSize: 12, color: COLORS.textMuted }}>Winning days</span>
+                      <input
+                        type="color"
+                        value={targets.calWinColor || "#16A34A"}
+                        onChange={(e) => updateTargets({ calWinColor: e.target.value })}
+                        style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
+                      />
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontSize: 12, color: COLORS.textMuted }}>Losing days</span>
+                      <input
+                        type="color"
+                        value={targets.calLossColor || "#E23D45"}
+                        onChange={(e) => updateTargets({ calLossColor: e.target.value })}
+                        style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
+                      />
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontSize: 12, color: COLORS.textMuted }}>Payouts</span>
+                      <input
+                        type="color"
+                        value={targets.calPayoutColor || "#0EA5E9"}
+                        onChange={(e) => updateTargets({ calPayoutColor: e.target.value })}
+                        style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
+                      />
+                    </div>
+                    {(targets.calWinColor !== "#16A34A" || targets.calLossColor !== "#E23D45" || targets.calPayoutColor !== "#0EA5E9") && (
+                      <button
+                        type="button"
+                        onClick={() => updateTargets({ calWinColor: "#16A34A", calLossColor: "#E23D45", calPayoutColor: "#0EA5E9" })}
+                        style={{ ...ghostBtnStyle_(), fontSize: 11, padding: "4px 10px" }}
+                      >
+                        Reset calendar
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Account size / equity */}
+              <div
+                style={{
+                  flex: 1,
+                  background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16,
+                  padding: 22, boxShadow: "0 1px 2px rgba(23,21,51,0.04)",
+                  minHeight: "calc(50vh - 100px)", display: "flex", flexDirection: "column", justifyContent: "space-between",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 16, marginBottom: 8 }}>
+                  <div>
+                    <div style={{ fontSize: 12.5, color: COLORS.textMuted, fontWeight: 600, marginBottom: 4 }}>ACCOUNT SIZE</div>
+                    <div className="mono" style={{ fontSize: 34, fontWeight: 700, color: currentBalance >= 0 ? COLORS.win : COLORS.loss }}>
+                      {fmtMoney(currentBalance)}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>PEAK</div>
+                      <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: COLORS.win }}>{fmtMoney(peakBalance)}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>DRAWDOWN</div>
+                      <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: drawdownRecovered ? COLORS.textMuted : COLORS.loss }}>{fmtMoney(displayDrawdown)}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>TRADES</div>
+                      <div className="mono" style={{ fontSize: 15, fontWeight: 700 }}>{chronoTrades.length}</div>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "flex-end", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
+                  <Field label="From" style={{ flex: "0 1 150px" }}>
+                    <input type="date" value={perfRangeStart} onChange={(e) => { setPerfRangeStart(e.target.value); setQuickRange(""); }} style={inputStyle_()} />
+                  </Field>
+                  <Field label="To" style={{ flex: "0 1 150px" }}>
+                    <input type="date" value={perfRangeEnd} onChange={(e) => { setPerfRangeEnd(e.target.value); setQuickRange(""); }} style={inputStyle_()} />
+                  </Field>
+                  {(perfRangeStart || perfRangeEnd) && (
+                    <button type="button" onClick={() => { setPerfRangeStart(firstEntryDate || ""); setPerfRangeEnd(""); setQuickRange(""); }} style={ghostBtnStyle_()}>
+                      Clear range
+                    </button>
+                  )}
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
+                  <span style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600 }}>Quick range</span>
+                  <select
+                    value={quickRange}
+                    onChange={(e) => applyQuickRange(e.target.value)}
+                    style={{ ...inputStyle_(), width: "auto", display: "inline-block" }}
+                  >
+                    <option value="">Custom</option>
+                    <option value="1d">1 Day</option>
+                    <option value="1w">1 Week</option>
+                    <option value="1m">1 Month</option>
+                    <option value="6m">6 Months</option>
+                    <option value="1y">1 Year</option>
+                  </select>
+                </div>
+                <div style={{ flex: 1, minHeight: 260 }}>
+                  <EquityChart
+                    points={equityCurve}
+                    height={320}
+                    profitTarget={profitTargetNum}
+                    maxLossLevel={maxLossLevel}
+                    axisStep={targets.axisStep === "" ? null : Number(targets.axisStep)}
+                    growthColor={targets.growthColor || null}
+                    profitColor={targets.profitColor || COLORS.win}
+                    minBalanceColor={targets.minBalanceColor || COLORS.loss}
+                    axisColor={targets.axisColor || null}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+              <button
+                onClick={() => { if (atEarliestMonth) return; const m = calMonth - 1; if (m < 0) { setCalMonth(11); setCalYear(calYear - 1); } else setCalMonth(m); }}
+                disabled={atEarliestMonth}
+                style={{ ...ghostBtnStyle_(), opacity: atEarliestMonth ? 0.4 : 1, cursor: atEarliestMonth ? "not-allowed" : "pointer" }}
+              >
+                ← Prev
+              </button>
+              <div style={{ fontSize: 15, fontWeight: 700 }}>{monthLabel}</div>
+              <button
+                onClick={() => { const m = calMonth + 1; if (m > 11) { setCalMonth(0); setCalYear(calYear + 1); } else setCalMonth(m); }}
+                style={ghostBtnStyle_()}
+              >
+                Next →
+              </button>
+            </div>
+
+            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 14, boxShadow: "0 1px 2px rgba(23,21,51,0.04)", overflowX: "auto" }}>
+              <div style={{ minWidth: 670 }}>
+                {/* header row */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr) 110px 110px", gap: 8, marginBottom: 8 }}>
+                  {WEEKDAY_LABELS.map((wd) => (
+                    <div key={wd} style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, textAlign: "center", padding: "4px 0" }}>{wd}</div>
+                  ))}
+                  <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, textAlign: "center", padding: "4px 0" }}>Total</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, textAlign: "center", padding: "4px 0" }}>Payouts</div>
+                </div>
+
+                {/* week rows */}
+                {calendarWeeks.map((week, wi) => (
+                  <div key={wi} style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr) 110px 110px", gap: 8, marginBottom: 8 }}>
+                    {week.cells.slice(1, 6).map((cell, ci) => {
+                      if (!cell) {
+                        return <div key={ci} style={{ background: COLORS.subtleBg, border: `1px solid ${COLORS.border}`, borderRadius: 10, minHeight: 74 }} />;
+                      }
+                      const d = cell.data;
+                      const hasTrades = !!(d && d.count > 0);
+                      const isWin = hasTrades && d.total >= 0;
+                      const calWin = targets.calWinColor || COLORS.win;
+                      const calLoss = targets.calLossColor || COLORS.loss;
+                      const cellColor = isWin ? calWin : calLoss;
+                      const cellSoft = isWin ? calWin + "1E" : calLoss + "1E";
+                      return (
+                        <div
+                          key={ci}
+                          onClick={() => hasTrades && setSelectedDay(cell.dateStr)}
+                          style={{
+                            borderRadius: 10, minHeight: 74, padding: "8px 10px",
+                            background: hasTrades ? cellSoft : COLORS.subtleBg,
+                            border: `1.5px solid ${hasTrades ? cellColor : COLORS.border}`,
+                            display: "flex", flexDirection: "column", justifyContent: "space-between",
+                            cursor: hasTrades ? "pointer" : "default",
+                            transition: "transform 0.1s ease",
+                          }}
+                        >
+                          <div style={{ fontSize: 13, color: hasTrades ? cellColor : COLORS.textMuted, fontWeight: 600 }}>
+                            {cell.day}
+                          </div>
+                          {hasTrades && (
+                            <div>
+                              <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: cellColor }}>
+                                {fmtMoney(d.total)}
+                              </div>
+                              <div style={{ fontSize: 12.5, color: cellColor, opacity: 0.85 }}>
+                                {Math.round((d.wins / d.count) * 100)}%
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    <div
+                      style={{
+                        borderRadius: 10, minHeight: 74, padding: "8px 10px",
+                        background: week.tradeCount ? (week.total >= 0 ? (targets.calWinColor || COLORS.win) + "1E" : (targets.calLossColor || COLORS.loss) + "1E") : COLORS.subtleBg,
+                        border: `1.5px solid ${week.tradeCount ? (week.total >= 0 ? (targets.calWinColor || COLORS.win) : (targets.calLossColor || COLORS.loss)) : COLORS.border}`,
+                        display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 4,
+                      }}
+                    >
+                      {week.tradeCount ? (
+                        <>
+                          <div className="mono" style={{ fontSize: 13, fontWeight: 700, color: week.total >= 0 ? (targets.calWinColor || COLORS.win) : (targets.calLossColor || COLORS.loss) }}>
+                            {fmtMoney(week.total)}
+                          </div>
+                          <div style={{ fontSize: 10.5, color: COLORS.textMuted }}>{week.tradeCount} trade{week.tradeCount === 1 ? "" : "s"}</div>
+                        </>
+                      ) : (
+                        <div style={{ fontSize: 11, color: COLORS.textMuted }}>—</div>
+                      )}
+                    </div>
+                    <div
+                      style={{
+                        borderRadius: 10, minHeight: 74, padding: "8px 10px",
+                        background: week.payoutTotal !== 0 ? (targets.calPayoutColor || COLORS.payout) + "1E" : COLORS.subtleBg,
+                        border: `1.5px solid ${week.payoutTotal !== 0 ? (targets.calPayoutColor || COLORS.payout) : COLORS.border}`,
+                        display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 4,
+                      }}
+                    >
+                      {week.payoutTotal !== 0 ? (
+                        <div className="mono" style={{ fontSize: 13, fontWeight: 700, color: targets.calPayoutColor || COLORS.payout }}>
+                          {fmtMoney(week.payoutTotal)}
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 11, color: COLORS.textMuted }}>—</div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        ) : tab === "patterns" ? (
+          <>
+            {patternStats.length === 0 ? (
+              <EmptyState text="Link journal entries to trades (in the Journal tab) to see how you perform by how you felt." />
+            ) : (
+              <>
+                <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, marginBottom: 24 }}>
+                  <StatCard label="Best state of mind" value={bestPattern ? bestPattern.label : "—"} color={COLORS.win} />
+                  <StatCard label="Worst state of mind" value={worstPattern ? worstPattern.label : "—"} color={COLORS.loss} />
+                </div>
+                <div style={{ display: "grid", gap: 10 }}>
+                  {patternStats.map((p) => {
+                    const maxAbs = Math.max(...patternStats.map((x) => Math.abs(x.total)), 1);
+                    const barWidth = Math.max((Math.abs(p.total) / maxAbs) * 100, 4);
+                    return (
+                      <div key={p.moodKey} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10 }}>
+                          <span style={{ fontSize: 14, fontWeight: 700, color: p.color }}>{p.label}</span>
+                          <span className="mono" style={{ fontSize: 15, fontWeight: 700, color: p.total >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(p.total)}</span>
+                        </div>
+                        <div style={{ background: "#EEF0F7", borderRadius: 5, height: 7, marginBottom: 12, overflow: "hidden" }}>
+                          <div style={{ width: `${barWidth}%`, height: "100%", background: p.total >= 0 ? COLORS.win : COLORS.loss, borderRadius: 5 }} />
+                        </div>
+                        <div className="mono" style={{ display: "flex", gap: 18, fontSize: 12, color: COLORS.textMuted, flexWrap: "wrap" }}>
+                          <span>{p.count} trade{p.count === 1 ? "" : "s"}</span>
+                          <span>{p.winRate}% win rate</span>
+                          <span>avg {fmtMoney(p.avg)}</span>
+                          <span>avg {fmtDuration(p.avgDuration)}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </>
+        ) : (
+          <>
+            <form onSubmit={addEntry} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+              <div style={{ fontSize: 13, color: COLORS.text, fontWeight: 700 }}>Journal entry</div>
+              <Field label="Date">
+                <input type="date" value={jDate} onChange={(e) => setJDate(e.target.value)} style={inputStyle_()} />
+              </Field>
+              <Field label="Link to trade (optional)">
+                <select value={jLinkedTradeId} onChange={(e) => setJLinkedTradeId(e.target.value)} style={inputStyle_()}>
+                  <option value="">— No trade linked —</option>
+                  {linkableTrades.map((t) => (
+                    <option key={t.id} value={t.id}>{tradeLabel(t)}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="How did you feel?">
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                  {MOODS.map((m) => (
+                    <button
+                      type="button" key={m.key} onClick={() => setJMood(m.key)}
+                      style={{
+                        background: jMood === m.key ? m.color + "1A" : COLORS.subtleBg,
+                        border: `1.5px solid ${jMood === m.key ? m.color : COLORS.border}`,
+                        color: jMood === m.key ? m.color : COLORS.textMuted,
+                        padding: "7px 14px", borderRadius: 20, fontSize: 13, fontWeight: 600, cursor: "pointer",
+                      }}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  value={jFeelingDetail}
+                  onChange={(e) => setJFeelingDetail(e.target.value)}
+                  placeholder="Go deeper — what triggered it, how it showed up in your trading…"
+                  style={{ ...inputStyle_(), minHeight: 60, resize: "vertical" }}
+                />
+              </Field>
+              <Field label="Market conditions">
+                <textarea value={jConditions} onChange={(e) => setJConditions(e.target.value)} placeholder="Choppy pre-CPI, low volume, range-bound…" style={{ ...inputStyle_(), minHeight: 60, resize: "vertical" }} />
+              </Field>
+              <Field label="Notes">
+                <textarea value={jNotes} onChange={(e) => setJNotes(e.target.value)} placeholder="What happened, what you'd do differently…" style={{ ...inputStyle_(), minHeight: 80, resize: "vertical" }} />
+              </Field>
+              {journalFormError && (
+                <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>
+                  {journalFormError}
+                </div>
+              )}
+              <button type="submit" style={primaryBtnStyle_()}>Save entry</button>
+            </form>
+
+            {entries.length === 0 ? (
+              <EmptyState text="No journal entries yet. Write your first one above." />
+            ) : (
+              <div style={{ display: "grid", gap: 10 }}>
+                {entries.map((en) => {
+                  const mi = moodInfo(en.mood);
+                  const linkedTrade = en.tradeId ? findTrade(en.tradeId) : null;
+                  return (
+                    <div key={en.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <span className="mono" style={{ fontSize: 12.5, color: COLORS.textMuted }}>{en.date}</span>
+                          <span style={{ fontSize: 11, color: mi.color, border: `1px solid ${mi.color}33`, background: mi.color + "14", padding: "2px 9px", borderRadius: 20, fontWeight: 600 }}>
+                            {mi.label}
+                          </span>
+                          {linkedTrade && (
+                            <button
+                              onClick={() => setViewTradeId(linkedTrade.id)}
+                              style={{ fontSize: 11, color: COLORS.accent, border: `1px solid ${COLORS.accent}33`, background: COLORS.accentSoft, padding: "2px 9px", borderRadius: 20, fontWeight: 600, cursor: "pointer" }}
+                            >
+                              🔗 {tradeLabel(linkedTrade)}
+                            </button>
+                          )}
+                          {en.tradeId && !linkedTrade && (
+                            <span style={{ fontSize: 11, color: COLORS.textMuted, fontStyle: "italic" }}>Linked trade deleted</span>
+                          )}
+                        </div>
+                        <button onClick={() => deleteEntry(en.id)} style={deleteBtnStyle_()} aria-label="Delete entry">✕</button>
+                      </div>
+                      {en.feelingDetail && (
+                        <div style={{ fontSize: 14, color: COLORS.text, lineHeight: 1.5, marginBottom: 6 }}>{en.feelingDetail}</div>
+                      )}
+                      {en.conditions && (
+                        <div style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 6 }}>
+                          <span style={{ color: COLORS.text, fontWeight: 600 }}>Market: </span>{en.conditions}
+                        </div>
+                      )}
+                      {en.notes && <div style={{ fontSize: 14, color: COLORS.text, lineHeight: 1.5 }}>{en.notes}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Day detail modal */}
+      {selectedDay && (() => {
+        const dayTrades = trades.filter((t) => t.date === selectedDay);
+        const dayTradeIds = new Set(dayTrades.map((t) => t.id));
+        const dayEntries = entries.filter((en) => en.date === selectedDay || (en.tradeId && dayTradeIds.has(en.tradeId)));
+        const dayTotal = dayTrades.reduce((s, t) => s + t.pnl, 0);
+        return (
+          <div
+            onClick={() => setSelectedDay(null)}
+            style={{ position: "fixed", inset: 0, background: "rgba(20,20,35,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50 }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{ background: COLORS.card, borderRadius: 16, padding: 24, width: "100%", maxWidth: 560, maxHeight: "82vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(20,20,35,0.35)" }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
+                <div>
+                  <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600, marginBottom: 2 }}>
+                    {new Date(selectedDay + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
+                  </div>
+                  <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: dayTotal >= 0 ? COLORS.win : COLORS.loss }}>
+                    {fmtMoney(dayTotal)}
+                  </div>
+                </div>
+                <button onClick={() => setSelectedDay(null)} style={deleteBtnStyle_()} aria-label="Close">✕</button>
+              </div>
+
+              <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>TRADES ({dayTrades.length})</div>
+              <div style={{ display: "grid", gap: 8, marginBottom: 20 }}>
+                {dayTrades.map((t) => {
+                  const linkedEntries = entries.filter((en) => en.tradeId === t.id);
+                  return (
+                    <div key={t.id} style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span className="mono" style={{ fontSize: 11, color: COLORS.textMuted }}>#{tradeNumberMap.get(t.id)}</span>
+                          <span style={{ fontWeight: 600, fontSize: 13.5 }}>{t.symbol || "—"}</span>
+                          <span style={{ fontSize: 11, fontWeight: 700, padding: "1px 8px", borderRadius: 6, color: t.side === "short" ? COLORS.loss : COLORS.win, background: t.side === "short" ? COLORS.lossSoft : COLORS.winSoft }}>
+                            {t.side === "short" ? "SHORT" : "LONG"}
+                          </span>
+                        </div>
+                        <span className="mono" style={{ fontWeight: 700, fontSize: 14, color: pnlColor(t) }}>{fmtMoney(t.pnl)}</span>
+                      </div>
+                      <div className="mono" style={{ fontSize: 11.5, color: COLORS.textMuted, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                        <span>{fmtDuration(t.duration)}</span>
+                        {t.risk !== null && t.risk !== undefined && <span>Risk {t.risk}%</span>}
+                        {t.rr !== null && t.rr !== undefined && <span>{t.rr}R</span>}
+                        {t.grade && (
+                          <span style={{ color: gradeColor(t.grade), background: gradeColor(t.grade) + "18", border: `1px solid ${gradeColor(t.grade)}40`, borderRadius: 6, padding: "1px 7px", fontWeight: 700 }}>
+                            {t.grade}
+                          </span>
+                        )}
+                        <button
+                          onClick={() => setMediaModalTradeId(t.id)}
+                          style={{
+                            display: "inline-flex", alignItems: "center", gap: 4,
+                            background: (t.media || []).length ? COLORS.accentSoft : "transparent",
+                            border: `1px solid ${(t.media || []).length ? COLORS.accent + "33" : COLORS.border}`,
+                            color: (t.media || []).length ? COLORS.accent : COLORS.textMuted,
+                            borderRadius: 20, padding: "2px 8px", fontSize: 11, fontWeight: 600, cursor: "pointer",
+                          }}
+                        >
+                          📎 {(t.media || []).length || "Add"}
+                        </button>
+                      </div>
+                      {linkedEntries.length > 0 && (
+                        <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+                          {linkedEntries.map((en) => {
+                            const mi = moodInfo(en.mood);
+                            return (
+                              <div key={en.id} style={{ fontSize: 11.5, color: COLORS.accent, display: "flex", alignItems: "center", gap: 6 }}>
+                                <span>🔗</span>
+                                <span style={{ color: mi.color, fontWeight: 600 }}>{mi.label}</span>
+                                {(en.feelingDetail || en.notes) && <span style={{ color: COLORS.textMuted }}>— {(en.feelingDetail || en.notes).slice(0, 60)}{(en.feelingDetail || en.notes).length > 60 ? "…" : ""}</span>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {dayEntries.length > 0 && (
+                <>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>JOURNAL ENTRIES ({dayEntries.length})</div>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {dayEntries.map((en) => {
+                      const mi = moodInfo(en.mood);
+                      return (
+                        <div key={en.id} style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                            <span style={{ fontSize: 11, color: mi.color, border: `1px solid ${mi.color}33`, background: mi.color + "14", padding: "2px 9px", borderRadius: 20, fontWeight: 600 }}>
+                              {mi.label}
+                            </span>
+                          </div>
+                          {en.feelingDetail && <div style={{ fontSize: 13.5, marginBottom: 4 }}>{en.feelingDetail}</div>}
+                          {en.conditions && <div style={{ fontSize: 12.5, color: COLORS.textMuted, marginBottom: 4 }}><span style={{ fontWeight: 600, color: COLORS.text }}>Market: </span>{en.conditions}</div>}
+                          {en.notes && <div style={{ fontSize: 13.5 }}>{en.notes}</div>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {editingTradeId && editForm && (
+        <div onClick={() => { setEditingTradeId(null); setEditForm(null); }} style={{ position: "fixed", inset: 0, background: "rgba(20,20,35,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 58 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.card, borderRadius: 16, padding: 24, width: "100%", maxWidth: 480, boxShadow: "0 20px 60px rgba(20,20,35,0.35)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div style={{ fontSize: 16, fontWeight: 700 }}>Edit trade</div>
+              <button onClick={() => { setEditingTradeId(null); setEditForm(null); }} style={deleteBtnStyle_()} aria-label="Close">✕</button>
+            </div>
+            <div style={{ display: "grid", gap: 12 }}>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <Field label="Date" style={{ flex: "1 1 140px" }}>
+                  <input type="date" value={editForm.date} onChange={(e) => setEditForm({ ...editForm, date: e.target.value })} style={inputStyle_()} />
+                </Field>
+                <Field label="Symbol" style={{ flex: "1 1 100px" }}>
+                  <input type="text" value={editForm.symbol} onChange={(e) => setEditForm({ ...editForm, symbol: e.target.value })} style={inputStyle_()} />
+                </Field>
+              </div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <Field label="Side" style={{ flex: "1 1 90px" }}>
+                  <select value={editForm.side} onChange={(e) => setEditForm({ ...editForm, side: e.target.value })} style={inputStyle_()}>
+                    <option value="long">Long</option>
+                    <option value="short">Short</option>
+                  </select>
+                </Field>
+                <Field label="P&L ($)" style={{ flex: "1 1 110px" }}>
+                  <input type="number" step="0.01" value={editForm.pnl} onChange={(e) => setEditForm({ ...editForm, pnl: e.target.value })} style={inputStyle_()} className="mono" />
+                </Field>
+                <Field label="Duration (min)" style={{ flex: "1 1 110px" }}>
+                  <input type="number" min="0" value={editForm.duration} onChange={(e) => setEditForm({ ...editForm, duration: e.target.value })} style={inputStyle_()} className="mono" />
+                </Field>
+              </div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <Field label="Risk (%)" style={{ flex: "1 1 90px" }}>
+                  <input type="number" step="0.1" min="0" value={editForm.risk} onChange={(e) => setEditForm({ ...editForm, risk: e.target.value })} style={inputStyle_()} className="mono" />
+                </Field>
+                <Field label="R:R" style={{ flex: "1 1 90px" }}>
+                  <input type="number" step="0.01" min="0" value={editForm.rr} onChange={(e) => setEditForm({ ...editForm, rr: e.target.value })} style={inputStyle_()} className="mono" />
+                </Field>
+                <Field label="Grade" style={{ flex: "1 1 90px" }}>
+                  <select value={editForm.grade} onChange={(e) => setEditForm({ ...editForm, grade: e.target.value })} style={inputStyle_()}>
+                    <option value="">—</option>
+                    {GRADES.slice().reverse().map((g) => <option key={g} value={g}>{g}</option>)}
+                  </select>
+                </Field>
+              </div>
+              {editForm.error && (
+                <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "8px 12px", borderRadius: 8, fontSize: 13 }}>
+                  {editForm.error}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={saveEditedTrade} style={primaryBtnStyle_()}>Save changes</button>
+                <button onClick={() => { setEditingTradeId(null); setEditForm(null); }} style={ghostBtnStyle_()}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {viewTradeId && (() => {
+        const t = findTrade(viewTradeId);
+        if (!t) return null;
+        const fields = [
+          { label: "Date", value: t.date },
+          { label: "Symbol", value: t.symbol || "—" },
+          { label: "Side", value: t.side === "short" ? "Short" : "Long" },
+          { label: "P&L", value: fmtMoney(t.pnl), color: pnlColor(t) },
+          { label: "Duration", value: fmtDuration(t.duration) },
+          { label: "Risk", value: t.risk !== null && t.risk !== undefined ? `${t.risk}%` : "—" },
+          { label: "R:R", value: t.rr !== null && t.rr !== undefined ? `${t.rr}R` : "—" },
+          { label: "Grade", value: t.grade || "—", color: t.grade ? gradeColor(t.grade) : null },
+        ];
+        return (
+          <div onClick={() => setViewTradeId(null)} style={{ position: "fixed", inset: 0, background: "rgba(20,20,35,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 55 }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.card, borderRadius: 16, padding: 24, width: "100%", maxWidth: 460, boxShadow: "0 20px 60px rgba(20,20,35,0.35)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
+                <div>
+                  <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600, marginBottom: 2 }}>TRADE #{tradeNumberMap.get(t.id)}</div>
+                  <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: pnlColor(t) }}>{fmtMoney(t.pnl)}</div>
+                </div>
+                <button onClick={() => setViewTradeId(null)} style={deleteBtnStyle_()} aria-label="Close">✕</button>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 18 }}>
+                {fields.map((f) => (
+                  <div key={f.label}>
+                    <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>{f.label.toUpperCase()}</div>
+                    <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: f.color || COLORS.text }}>{f.value}</div>
+                  </div>
+                ))}
+              </div>
+              <button
+                onClick={() => { setViewTradeId(null); setMediaModalTradeId(t.id); }}
+                style={{ ...ghostBtnStyle_(), width: "100%" }}
+              >
+                📎 {(t.media || []).length ? `View ${(t.media || []).length} attachment${(t.media || []).length === 1 ? "" : "s"}` : "Add photos/videos"}
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {mediaModalTradeId && (() => {
+        const t = findTrade(mediaModalTradeId);
+        if (!t) return null;
+        return (
+          <TradeMediaModal
+            trade={t}
+            onClose={() => setMediaModalTradeId(null)}
+            onAddFiles={addMediaFiles}
+            onDeleteMedia={deleteMediaItem}
+          />
+        );
+      })()}
+    </div>
+  );
+}
+
+// ---- Top-level app: session check -> auth gate -> subscription gate -> the journal ----
+function App() {
+  const [theme] = useState(() => loadLocal(THEME_KEY, "light"));
+  applyTheme(theme); // so the auth/paywall screens respect the stored theme too
+
+  const [session, setSession] = useState(undefined); // undefined = checking, null = signed out
+  const [profile, setProfile] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [checkoutBusy, setCheckoutBusy] = useState(false);
+  const [checkoutError, setCheckoutError] = useState(null);
+  const [activating, setActivating] = useState(() => new URLSearchParams(window.location.search).get("checkout") === "success");
+
+  useEffect(() => {
+    supabaseClient.auth.getSession().then(({ data }) => setSession(data.session || null));
+    const { data: authListener } = supabaseClient.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+    });
+    return () => authListener.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!session) { setProfile(null); setProfileLoading(false); return; }
+    let cancelled = false;
+    let attempts = 0;
+    setProfileLoading(true);
+
+    async function fetchProfile() {
+      attempts += 1;
+      const { data, error } = await supabaseClient.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
+      if (cancelled) return;
+      if (!error && data) {
+        setProfile(data);
+        setProfileLoading(false);
+        return;
+      }
+      // The profile row is created by a DB trigger right after signup — on the
+      // very first login it can occasionally lag by a moment.
+      if (attempts < 5) {
+        setTimeout(fetchProfile, 800);
+      } else {
+        setProfileLoading(false);
+      }
+    }
+    fetchProfile();
+    return () => { cancelled = true; };
+  }, [session && session.user.id]);
+
+  // Poll briefly after a Stripe Checkout redirect for the webhook to flip the status to active.
+  useEffect(() => {
+    if (!activating || !session) return;
+    let cancelled = false;
+    let attempts = 0;
+    const interval = setInterval(async () => {
+      attempts += 1;
+      const { data } = await supabaseClient.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
+      if (cancelled) return;
+      if (data) setProfile(data);
+      if ((data && data.subscription_status === "active") || attempts >= 10) {
+        clearInterval(interval);
+        setActivating(false);
+        const url = new URL(window.location.href);
+        url.searchParams.delete("checkout");
+        window.history.replaceState({}, "", url.toString());
+      }
+    }, 2000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [activating, session && session.user.id]);
+
+  async function handleLogout() {
+    await supabaseClient.auth.signOut();
+  }
+
+  async function handleSubscribe() {
+    setCheckoutBusy(true);
+    setCheckoutError(null);
+    try {
+      const { data: sessionData } = await supabaseClient.auth.getSession();
+      const token = sessionData.session && sessionData.session.access_token;
+      const res = await fetch("/api/create-checkout-session", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json();
+      if (!res.ok || !body.url) throw new Error(body.error || "Could not start checkout.");
+      window.location.href = body.url;
+    } catch (err) {
+      setCheckoutError(err.message || "Could not start checkout.");
+      setCheckoutBusy(false);
+    }
+  }
+
+  const loadingScreen = (text) => (
+    <div style={{ display: "flex", minHeight: "100vh", alignItems: "center", justifyContent: "center", background: COLORS.bg, color: COLORS.textMuted, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif" }}>
+      {text}
+    </div>
+  );
+
+  if (session === undefined) return loadingScreen("Loading…");
+  if (session === null) return <AuthScreen />;
+  if (profileLoading) return loadingScreen("Setting up your account…");
+  if (activating) return loadingScreen("Activating your account…");
+
+  const status = profile ? profile.subscription_status : "trialing";
+  const nowMs = Date.now();
+  const createdAtMs = profile ? new Date(profile.created_at).getTime() : nowMs;
+  const trialEndMs = createdAtMs + 7 * 24 * 60 * 60 * 1000;
+  const periodEndMs = profile && profile.current_period_end ? new Date(profile.current_period_end).getTime() : null;
+  const graceMs = 3 * 24 * 60 * 60 * 1000;
+  const allowed =
+    status === "active" ||
+    (status === "trialing" && nowMs < trialEndMs) ||
+    (status === "past_due" && periodEndMs !== null && nowMs < periodEndMs + graceMs);
+
+  if (!allowed) {
+    return (
+      <Paywall
+        status={status}
+        onLogout={handleLogout}
+        onSubscribe={handleSubscribe}
+        checkoutBusy={checkoutBusy}
+        checkoutError={checkoutError}
+      />
+    );
+  }
+
+  return <TradeJournal session={session} onLogout={handleLogout} />;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

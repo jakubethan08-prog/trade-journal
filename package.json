@@ -1,0 +1,10 @@
+{
+  "name": "a-plus-trades-app",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Server-side dependencies for the /api Stripe functions only. index.html has no build step.",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "stripe": "^17.3.0"
+  }
+}
