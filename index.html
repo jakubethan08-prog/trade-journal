@@ -421,6 +421,26 @@ function IconCalendar({ active }) {
     </svg>
   );
 }
+function IconDashboard({ active }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+      <rect x="3" y="3" width="8" height="8" rx="1.5" fill={active ? "#fff" : "#8B8FA3"}/>
+      <rect x="13" y="3" width="8" height="5" rx="1.5" fill={active ? "#fff" : "#8B8FA3"}/>
+      <rect x="13" y="10" width="8" height="11" rx="1.5" fill={active ? "#fff" : "#8B8FA3"}/>
+      <rect x="3" y="13" width="8" height="8" rx="1.5" fill={active ? "#fff" : "#8B8FA3"}/>
+    </svg>
+  );
+}
+function IconFriends({ active }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+      <circle cx="8.5" cy="8" r="3.5" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2"/>
+      <circle cx="16.5" cy="9" r="3" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2"/>
+      <path d="M2.5 20C2.5 16.5 5 14 8.5 14C11 14 13 15.2 14 17" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2" strokeLinecap="round"/>
+      <path d="M13 14.5C13.9 14.2 15 14 15.7 14C18.5 14 20.5 16 21 19" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2" strokeLinecap="round"/>
+    </svg>
+  );
+}
 
 // ---- Stable, top-level presentational components ----
 function StatCard({ label, value, color }) {
@@ -866,10 +886,18 @@ function TradeJournal({ session, onLogout }) {
   const [jFeelingDetail, setJFeelingDetail] = useState("");
   const [jLinkedTradeId, setJLinkedTradeId] = useState("");
 
+  const [friendships, setFriendships] = useState([]);
+  const [friendsLoading, setFriendsLoading] = useState(true);
+  const [friendEmail, setFriendEmail] = useState("");
+  const [friendRequestError, setFriendRequestError] = useState(null);
+  const [friendRequestBusy, setFriendRequestBusy] = useState(false);
+  const [friendStats, setFriendStats] = useState({});
+  const [friendStatsLoading, setFriendStatsLoading] = useState(false);
+
   // ---- Load this user's data from Supabase on mount ----
   async function reloadAllData() {
     const [tradesRes, entriesRes, targetsRes, mediaRes] = await Promise.all([
-      supabaseClient.from("trades").select("*").order("date", { ascending: false }),
+      supabaseClient.from("trades").select("*").eq("user_id", userId).order("date", { ascending: false }),
       supabaseClient.from("journal_entries").select("*").order("date", { ascending: false }),
       supabaseClient.from("targets").select("*").eq("user_id", userId).maybeSingle(),
       supabaseClient.from("trade_media").select("*"),
@@ -912,6 +940,92 @@ function TradeJournal({ session, onLogout }) {
   }, [userId]);
 
   useEffect(() => () => { if (targetsSaveTimer.current) clearTimeout(targetsSaveTimer.current); }, []);
+
+  // ---- Friends: requests, acceptance, and each accepted friend's headline stats ----
+  async function loadFriendships() {
+    setFriendsLoading(true);
+    try {
+      const { data: rows, error } = await supabaseClient.from("friendships").select("*");
+      if (error) throw error;
+      const otherIds = Array.from(new Set((rows || []).map((r) => (r.requester_id === userId ? r.addressee_id : r.requester_id))));
+      let profilesById = {};
+      if (otherIds.length) {
+        const { data: profs, error: profErr } = await supabaseClient.from("profiles").select("id, email, display_name").in("id", otherIds);
+        if (profErr) throw profErr;
+        profilesById = Object.fromEntries((profs || []).map((p) => [p.id, p]));
+      }
+      const enriched = (rows || []).map((r) => {
+        const otherId = r.requester_id === userId ? r.addressee_id : r.requester_id;
+        return { ...r, otherId, otherProfile: profilesById[otherId] || null, iAmRequester: r.requester_id === userId };
+      });
+      setFriendships(enriched);
+      setFriendRequestError(null);
+    } catch (e) {
+      setFriendRequestError("Couldn't load friends.");
+    } finally {
+      setFriendsLoading(false);
+    }
+  }
+
+  useEffect(() => { loadFriendships(); }, [userId]);
+
+  async function sendFriendRequest(e) {
+    e.preventDefault();
+    setFriendRequestError(null);
+    const email = friendEmail.trim();
+    if (!email) { setFriendRequestError("Enter an email address."); return; }
+    setFriendRequestBusy(true);
+    try {
+      const { error } = await supabaseClient.rpc("request_friend", { target_email: email });
+      if (error) throw error;
+      setFriendEmail("");
+      await loadFriendships();
+    } catch (err) {
+      setFriendRequestError(err.message || "Couldn't send friend request.");
+    } finally {
+      setFriendRequestBusy(false);
+    }
+  }
+
+  async function respondToFriendRequest(id, status) {
+    const { error } = await supabaseClient.from("friendships").update({ status, responded_at: new Date().toISOString() }).eq("id", id);
+    if (error) { setFriendRequestError("Couldn't update that request."); return; }
+    await loadFriendships();
+  }
+
+  async function removeFriendship(id) {
+    const { error } = await supabaseClient.from("friendships").delete().eq("id", id);
+    if (error) { setFriendRequestError("Couldn't remove that."); return; }
+    setFriendships(friendships.filter((f) => f.id !== id));
+  }
+
+  const acceptedFriends = friendships.filter((f) => f.status === "accepted");
+  const friendshipsKey = friendships.map((f) => `${f.id}:${f.status}`).join(",");
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!acceptedFriends.length) { setFriendStats({}); return; }
+    (async () => {
+      setFriendStatsLoading(true);
+      try {
+        const results = await Promise.all(acceptedFriends.map(async (f) => {
+          const { data, error } = await supabaseClient.from("trades").select("pnl, entry_type").eq("user_id", f.otherId);
+          if (error) throw error;
+          const tradingOnlyF = (data || []).filter((t) => t.entry_type !== "payout");
+          const total = tradingOnlyF.reduce((s, t) => s + Number(t.pnl), 0);
+          const winsF = tradingOnlyF.filter((t) => Number(t.pnl) > 0).length;
+          const winRateF = tradingOnlyF.length ? Math.round((winsF / tradingOnlyF.length) * 100) : 0;
+          return [f.otherId, { totalPnl: total, winRate: winRateF, tradeCount: tradingOnlyF.length }];
+        }));
+        if (!cancelled) setFriendStats(Object.fromEntries(results));
+      } catch (e) {
+        if (!cancelled) setFriendRequestError("Couldn't load a friend's stats.");
+      } finally {
+        if (!cancelled) setFriendStatsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [friendshipsKey]);
 
   function updateTargets(patch) {
     const next = { ...targets, ...patch };
@@ -1293,9 +1407,11 @@ function TradeJournal({ session, onLogout }) {
   const maxLossHit = maxLossLevel !== null && currentBalance <= maxLossLevel;
 
   const navItems = [
+    { key: "dashboard", label: "Dashboard", Icon: IconDashboard },
     { key: "calendar", label: "Performance", Icon: IconCalendar },
     { key: "patterns", label: "Patterns", Icon: IconPatterns },
     { key: "journal", label: "Journal", Icon: IconJournal },
+    { key: "friends", label: "Friends", Icon: IconFriends },
   ];
 
   return (
@@ -1370,10 +1486,10 @@ function TradeJournal({ session, onLogout }) {
         <header style={{ marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
           <div>
             <h1 style={{ fontSize: 24, margin: 0, fontWeight: 700, letterSpacing: "-0.01em" }}>
-              {tab === "trades" ? "Trades" : tab === "calendar" ? "Performance" : tab === "patterns" ? "Patterns" : "Journal"}
+              {tab === "dashboard" ? "Dashboard" : tab === "trades" ? "Trades" : tab === "calendar" ? "Performance" : tab === "patterns" ? "Patterns" : tab === "friends" ? "Friends" : "Journal"}
             </h1>
             <div style={{ fontSize: 13, color: COLORS.textMuted, marginTop: 2 }}>
-              {tab === "trades" ? "Log and review every trade" : tab === "calendar" ? "Account growth and daily/weekly P&L" : tab === "patterns" ? "How you perform by how you felt" : "Track how you felt and why"}
+              {tab === "dashboard" ? "Your performance and your friends'" : tab === "trades" ? "Log and review every trade" : tab === "calendar" ? "Account growth and daily/weekly P&L" : tab === "patterns" ? "How you perform by how you felt" : tab === "friends" ? "See each other's trades" : "Track how you felt and why"}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
@@ -1391,7 +1507,40 @@ function TradeJournal({ session, onLogout }) {
           </div>
         )}
 
-        {tab === "trades" ? (
+        {tab === "dashboard" ? (
+          <>
+            <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, marginBottom: 24 }}>
+              <StatCard label="Your total P&L" value={fmtMoney(totalPnl)} color={totalPnl >= 0 ? COLORS.win : COLORS.loss} />
+              <StatCard label="Your win rate" value={`${winRate}%`} />
+            </div>
+
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Friends</div>
+            {acceptedFriends.length === 0 ? (
+              <EmptyState text="Add a friend (in the Friends tab) to see their performance here." />
+            ) : (
+              <div style={{ display: "grid", gap: 10 }}>
+                {acceptedFriends.map((f) => {
+                  const stats = friendStats[f.otherId];
+                  const label = (f.otherProfile && (f.otherProfile.display_name || f.otherProfile.email)) || "Unknown";
+                  return (
+                    <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                      <div style={{ fontSize: 14, fontWeight: 700 }}>{label}</div>
+                      {stats ? (
+                        <div className="mono" style={{ display: "flex", gap: 20, fontSize: 13, flexWrap: "wrap" }}>
+                          <span>Total P&L: <span style={{ fontWeight: 700, color: stats.totalPnl >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(stats.totalPnl)}</span></span>
+                          <span>Win rate: <span style={{ fontWeight: 700 }}>{stats.winRate}%</span></span>
+                          <span style={{ color: COLORS.textMuted }}>{stats.tradeCount} trade{stats.tradeCount === 1 ? "" : "s"}</span>
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: 12, color: COLORS.textMuted }}>{friendStatsLoading ? "Loading…" : "—"}</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        ) : tab === "trades" ? (
           <>
             <form onSubmit={addTrade} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
               <div style={{ fontSize: 13, color: COLORS.text, fontWeight: 700 }}>Log a trade</div>
@@ -2020,6 +2169,79 @@ function TradeJournal({ session, onLogout }) {
                     );
                   })}
                 </div>
+              </>
+            )}
+          </>
+        ) : tab === "friends" ? (
+          <>
+            <form onSubmit={sendFriendRequest} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+              <div style={{ fontSize: 13, color: COLORS.text, fontWeight: 700 }}>Add a friend</div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+                <Field label="Their email" style={{ flex: "1 1 220px" }}>
+                  <input type="email" value={friendEmail} onChange={(e) => setFriendEmail(e.target.value)} placeholder="friend@example.com" style={inputStyle_()} />
+                </Field>
+                <button type="submit" disabled={friendRequestBusy} style={{ ...primaryBtnStyle_(), opacity: friendRequestBusy ? 0.7 : 1 }}>
+                  {friendRequestBusy ? "Sending…" : "Send request"}
+                </button>
+              </div>
+              {friendRequestError && (
+                <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>
+                  {friendRequestError}
+                </div>
+              )}
+            </form>
+
+            {friendsLoading ? (
+              <EmptyState text="Loading…" />
+            ) : (
+              <>
+                {friendships.filter((f) => f.status === "pending" && !f.iAmRequester).length > 0 && (
+                  <>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>REQUESTS RECEIVED</div>
+                    <div style={{ display: "grid", gap: 10, marginBottom: 24 }}>
+                      {friendships.filter((f) => f.status === "pending" && !f.iAmRequester).map((f) => (
+                        <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                          <div style={{ fontSize: 14, fontWeight: 600 }}>{(f.otherProfile && (f.otherProfile.display_name || f.otherProfile.email)) || "Unknown"}</div>
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <button onClick={() => respondToFriendRequest(f.id, "accepted")} style={primaryBtnStyle_()}>Accept</button>
+                            <button onClick={() => respondToFriendRequest(f.id, "declined")} style={ghostBtnStyle_()}>Decline</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {friendships.filter((f) => f.status === "pending" && f.iAmRequester).length > 0 && (
+                  <>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>REQUESTS SENT</div>
+                    <div style={{ display: "grid", gap: 10, marginBottom: 24 }}>
+                      {friendships.filter((f) => f.status === "pending" && f.iAmRequester).map((f) => (
+                        <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                          <div style={{ fontSize: 14, fontWeight: 600 }}>{(f.otherProfile && (f.otherProfile.display_name || f.otherProfile.email)) || "Unknown"}</div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            <span style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600 }}>Pending</span>
+                            <button onClick={() => removeFriendship(f.id)} style={deleteBtnStyle_()} aria-label="Cancel request">✕</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>FRIENDS</div>
+                {acceptedFriends.length === 0 ? (
+                  <EmptyState text="No friends yet. Add one by email above." />
+                ) : (
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {acceptedFriends.map((f) => (
+                      <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                        <div style={{ fontSize: 14, fontWeight: 600 }}>{(f.otherProfile && (f.otherProfile.display_name || f.otherProfile.email)) || "Unknown"}</div>
+                        <button onClick={() => removeFriendship(f.id)} style={ghostBtnStyle_()}>Remove</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </>
             )}
           </>
