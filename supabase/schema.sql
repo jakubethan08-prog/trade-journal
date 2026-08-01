@@ -329,16 +329,72 @@ create policy "select accepted friends trades" on public.trades
   );
 
 -- =========================================================================
--- patterns — user-defined trade setups/"confluences" you can tag onto a
--- trade. Distinct from the mood-based "how you perform by how you felt"
--- view, which is derived from journal entries instead of this table.
+-- confluences — atomic, user-named tags (e.g. "IFVG", "HTF FVG", "CISD")
+-- selected on a trade in Add Trade.
 -- =========================================================================
-create table if not exists public.patterns (
+-- Superseded by confluences/patterns below (an earlier version of this
+-- schema used "patterns" for what's now "confluences" — drop it clean if
+-- it's already there, nothing depends on it existing).
+drop table if exists public.trade_patterns cascade;
+drop table if exists public.patterns cascade;
+
+create table if not exists public.confluences (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles (id) on delete cascade,
   name text not null,
   created_at timestamptz not null default now(),
   unique (user_id, name)
+);
+
+alter table public.confluences enable row level security;
+
+drop policy if exists "select own confluences" on public.confluences;
+create policy "select own confluences" on public.confluences
+  for select using (auth.uid() = user_id);
+drop policy if exists "insert own confluences" on public.confluences;
+create policy "insert own confluences" on public.confluences
+  for insert with check (auth.uid() = user_id);
+drop policy if exists "delete own confluences" on public.confluences;
+create policy "delete own confluences" on public.confluences
+  for delete using (auth.uid() = user_id);
+
+-- =========================================================================
+-- trade_confluences — many-to-many: which confluences were tagged on a trade
+-- =========================================================================
+create table if not exists public.trade_confluences (
+  trade_id uuid not null references public.trades (id) on delete cascade,
+  confluence_id uuid not null references public.confluences (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  primary key (trade_id, confluence_id)
+);
+
+create index if not exists trade_confluences_trade_idx on public.trade_confluences (trade_id);
+create index if not exists trade_confluences_confluence_idx on public.trade_confluences (confluence_id);
+
+alter table public.trade_confluences enable row level security;
+
+drop policy if exists "select own trade confluences" on public.trade_confluences;
+create policy "select own trade confluences" on public.trade_confluences
+  for select using (auth.uid() = user_id);
+drop policy if exists "insert own trade confluences" on public.trade_confluences;
+create policy "insert own trade confluences" on public.trade_confluences
+  for insert with check (auth.uid() = user_id);
+drop policy if exists "delete own trade confluences" on public.trade_confluences;
+create policy "delete own trade confluences" on public.trade_confluences
+  for delete using (auth.uid() = user_id);
+
+-- =========================================================================
+-- patterns — a specific COMBINATION of confluences. The app auto-creates a
+-- row here (via pattern_confluences below) the first time a trade is tagged
+-- with a confluence set that hasn't been seen before; matching that same
+-- combination again just reuses the existing pattern. Gradeable B- to A++,
+-- same scale as trades.
+-- =========================================================================
+create table if not exists public.patterns (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  grade text check (grade in ('B-', 'B', 'B+', 'A-', 'A', 'A+', 'A++')),
+  created_at timestamptz not null default now()
 );
 
 alter table public.patterns enable row level security;
@@ -349,31 +405,34 @@ create policy "select own patterns" on public.patterns
 drop policy if exists "insert own patterns" on public.patterns;
 create policy "insert own patterns" on public.patterns
   for insert with check (auth.uid() = user_id);
+drop policy if exists "update own patterns" on public.patterns;
+create policy "update own patterns" on public.patterns
+  for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 drop policy if exists "delete own patterns" on public.patterns;
 create policy "delete own patterns" on public.patterns
   for delete using (auth.uid() = user_id);
 
 -- =========================================================================
--- trade_patterns — many-to-many: which confluences were tagged on a trade
+-- pattern_confluences — many-to-many: which confluences make up a pattern
 -- =========================================================================
-create table if not exists public.trade_patterns (
-  trade_id uuid not null references public.trades (id) on delete cascade,
+create table if not exists public.pattern_confluences (
   pattern_id uuid not null references public.patterns (id) on delete cascade,
+  confluence_id uuid not null references public.confluences (id) on delete cascade,
   user_id uuid not null references public.profiles (id) on delete cascade,
-  primary key (trade_id, pattern_id)
+  primary key (pattern_id, confluence_id)
 );
 
-create index if not exists trade_patterns_trade_idx on public.trade_patterns (trade_id);
-create index if not exists trade_patterns_pattern_idx on public.trade_patterns (pattern_id);
+create index if not exists pattern_confluences_pattern_idx on public.pattern_confluences (pattern_id);
+create index if not exists pattern_confluences_confluence_idx on public.pattern_confluences (confluence_id);
 
-alter table public.trade_patterns enable row level security;
+alter table public.pattern_confluences enable row level security;
 
-drop policy if exists "select own trade patterns" on public.trade_patterns;
-create policy "select own trade patterns" on public.trade_patterns
+drop policy if exists "select own pattern confluences" on public.pattern_confluences;
+create policy "select own pattern confluences" on public.pattern_confluences
   for select using (auth.uid() = user_id);
-drop policy if exists "insert own trade patterns" on public.trade_patterns;
-create policy "insert own trade patterns" on public.trade_patterns
+drop policy if exists "insert own pattern confluences" on public.pattern_confluences;
+create policy "insert own pattern confluences" on public.pattern_confluences
   for insert with check (auth.uid() = user_id);
-drop policy if exists "delete own trade patterns" on public.trade_patterns;
-create policy "delete own trade patterns" on public.trade_patterns
+drop policy if exists "delete own pattern confluences" on public.pattern_confluences;
+create policy "delete own pattern confluences" on public.pattern_confluences
   for delete using (auth.uid() = user_id);
