@@ -365,8 +365,15 @@ create table if not exists public.trade_confluences (
   trade_id uuid not null references public.trades (id) on delete cascade,
   confluence_id uuid not null references public.confluences (id) on delete cascade,
   user_id uuid not null references public.profiles (id) on delete cascade,
+  timeframe text,
   primary key (trade_id, confluence_id)
 );
+
+alter table public.trade_confluences add column if not exists timeframe text;
+
+alter table public.trade_confluences drop constraint if exists trade_confluences_timeframe_check;
+alter table public.trade_confluences add constraint trade_confluences_timeframe_check
+  check (timeframe is null or timeframe in ('15s', '30s', '1m', '2m', '3m', '5m', '15m', '30m', '1h', '2h', '4h'));
 
 create index if not exists trade_confluences_trade_idx on public.trade_confluences (trade_id);
 create index if not exists trade_confluences_confluence_idx on public.trade_confluences (confluence_id);

@@ -120,6 +120,21 @@ const MOODS = [
   { key: "flat", label: "Flat / numb", color: "#8B8FA3" },
 ];
 
+const TIMEFRAMES = [
+  { value: "15s", label: "15 Second" },
+  { value: "30s", label: "30 Second" },
+  { value: "1m", label: "1 Minute" },
+  { value: "2m", label: "2 Minute" },
+  { value: "3m", label: "3 Minute" },
+  { value: "5m", label: "5 Minute" },
+  { value: "15m", label: "15 Minute" },
+  { value: "30m", label: "30 Minute" },
+  { value: "1h", label: "1 Hour" },
+  { value: "2h", label: "2 Hour" },
+  { value: "4h", label: "4 Hour" },
+];
+const TIMEFRAME_LABEL = Object.fromEntries(TIMEFRAMES.map((t) => [t.value, t.label]));
+
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
@@ -900,6 +915,7 @@ function TradeJournal({ session, onLogout }) {
   const [newConfluenceName, setNewConfluenceName] = useState("");
   const [patternFormError, setPatternFormError] = useState(null);
   const [tConfluences, setTConfluences] = useState([]);
+  const [tConfluenceTimeframes, setTConfluenceTimeframes] = useState({});
   // Patterns: a specific COMBINATION of confluences, auto-created the first
   // time a trade is tagged with that exact combo; gradeable B- to A++.
   const [patternsList, setPatternsList] = useState([]);
@@ -1048,6 +1064,16 @@ function TradeJournal({ session, onLogout }) {
 
   function toggleConfluence(id) {
     setTConfluences((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    setTConfluenceTimeframes((prev) => {
+      if (prev[id] === undefined) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }
+
+  function setConfluenceTimeframe(id, timeframe) {
+    setTConfluenceTimeframes((prev) => ({ ...prev, [id]: timeframe }));
   }
 
   // ---- Patterns — a specific combination of confluences, auto-created the first
@@ -1173,13 +1199,17 @@ function TradeJournal({ session, onLogout }) {
     setTrades(next);
 
     if (tConfluences.length) {
-      const linkRows = tConfluences.map((confluenceId) => ({ trade_id: data.id, confluence_id: confluenceId, user_id: userId }));
+      const linkRows = tConfluences.map((confluenceId) => ({
+        trade_id: data.id, confluence_id: confluenceId, user_id: userId,
+        timeframe: tConfluenceTimeframes[confluenceId] || null,
+      }));
       const { data: insertedLinks, error: linkErr } = await supabaseClient.from("trade_confluences").insert(linkRows).select();
       if (!linkErr) setTradeConfluenceLinks([...tradeConfluenceLinks, ...insertedLinks]);
       await ensurePatternForConfluences(tConfluences);
     }
 
     setSaveError(null);
+    setTConfluenceTimeframes({});
     setTPnl(""); setTDur(""); setTSymbol("");
     setTRisk(""); setTRR(""); setTSide("long"); setTGrade(""); setTEntryType("trade"); setTConfluences([]);
   }
@@ -1751,17 +1781,31 @@ function TradeJournal({ session, onLogout }) {
                       {confluencesList.map((c) => {
                         const active = tConfluences.includes(c.id);
                         return (
-                          <button
-                            type="button" key={c.id} onClick={() => toggleConfluence(c.id)}
-                            style={{
-                              background: active ? COLORS.accentSoft : COLORS.subtleBg,
-                              border: `1.5px solid ${active ? COLORS.accent : COLORS.border}`,
-                              color: active ? COLORS.accent : COLORS.textMuted,
-                              padding: "6px 14px", borderRadius: 20, fontSize: 12.5, fontWeight: 600, cursor: "pointer",
-                            }}
-                          >
-                            {c.name}
-                          </button>
+                          <div key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                            <button
+                              type="button" onClick={() => toggleConfluence(c.id)}
+                              style={{
+                                background: active ? COLORS.accentSoft : COLORS.subtleBg,
+                                border: `1.5px solid ${active ? COLORS.accent : COLORS.border}`,
+                                color: active ? COLORS.accent : COLORS.textMuted,
+                                padding: "6px 14px", borderRadius: 20, fontSize: 12.5, fontWeight: 600, cursor: "pointer",
+                              }}
+                            >
+                              {c.name}
+                            </button>
+                            {active && (
+                              <select
+                                value={tConfluenceTimeframes[c.id] || ""}
+                                onChange={(e) => setConfluenceTimeframe(c.id, e.target.value)}
+                                style={{ ...inputStyle_(), width: "auto", padding: "6px 10px", fontSize: 12.5 }}
+                              >
+                                <option value="">Timeframe</option>
+                                {TIMEFRAMES.map((tf) => (
+                                  <option key={tf.value} value={tf.value}>{tf.label}</option>
+                                ))}
+                              </select>
+                            )}
+                          </div>
                         );
                       })}
                     </div>
@@ -2737,7 +2781,12 @@ function TradeJournal({ session, onLogout }) {
         if (!t) return null;
         const tradeConfluenceNames = tradeConfluenceLinks
           .filter((l) => l.trade_id === t.id)
-          .map((l) => { const conf = confluencesList.find((c) => c.id === l.confluence_id); return conf ? conf.name : null; })
+          .map((l) => {
+            const conf = confluencesList.find((c) => c.id === l.confluence_id);
+            if (!conf) return null;
+            const tfLabel = l.timeframe ? TIMEFRAME_LABEL[l.timeframe] || l.timeframe : null;
+            return tfLabel ? `${conf.name} (${tfLabel})` : conf.name;
+          })
           .filter(Boolean);
         const fields = [
           { label: "Date", value: t.date },
