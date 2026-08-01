@@ -929,21 +929,30 @@ function TradeJournal({ session, onLogout }) {
   const [friendStats, setFriendStats] = useState({});
   const [friendStatsLoading, setFriendStatsLoading] = useState(false);
 
-  // Confluences: atomic named tags (e.g. "IFVG"), picked in Add Trade.
+  // Confluences: atomic named tags (e.g. "IFVG"), picked in Add Trade. The
+  // same confluence can be added more than once on one trade (different
+  // timeframes), so selections are a list of entries, not a set of ids.
   const [confluencesList, setConfluencesList] = useState([]);
   const [tradeConfluenceLinks, setTradeConfluenceLinks] = useState([]);
   const [newConfluenceName, setNewConfluenceName] = useState("");
   const [patternFormError, setPatternFormError] = useState(null);
-  const [tConfluences, setTConfluences] = useState([]);
-  const [tConfluenceTimeframes, setTConfluenceTimeframes] = useState({});
+  const [tConfluenceEntries, setTConfluenceEntries] = useState([]); // [{ localId, confluenceId, timeframe }]
+  const [pickConfluenceId, setPickConfluenceId] = useState("");
+  const [pickTimeframe, setPickTimeframe] = useState("");
   // Patterns: a specific COMBINATION of confluences, auto-created the first
   // time a trade is tagged with that exact combo; gradeable B- to A++.
   const [patternsList, setPatternsList] = useState([]);
   const [patternConfluenceLinks, setPatternConfluenceLinks] = useState([]);
+  // Target tags: same idea as confluences (atomic, user-named), separate
+  // category, picked once each per trade (no repeats/timeframes).
+  const [targetTagsList, setTargetTagsList] = useState([]);
+  const [tradeTargetTagLinks, setTradeTargetTagLinks] = useState([]);
+  const [newTargetTagName, setNewTargetTagName] = useState("");
+  const [tTargetTags, setTTargetTags] = useState([]);
 
   // ---- Load this user's data from Supabase on mount ----
   async function reloadAllData() {
-    const [tradesRes, entriesRes, targetsRes, mediaRes, confluencesRes, tradeConfluencesRes, patternsRes, patternConfluencesRes] = await Promise.all([
+    const [tradesRes, entriesRes, targetsRes, mediaRes, confluencesRes, tradeConfluencesRes, patternsRes, patternConfluencesRes, targetTagsRes, tradeTargetTagsRes] = await Promise.all([
       supabaseClient.from("trades").select("*").eq("user_id", userId).order("date", { ascending: false }),
       supabaseClient.from("journal_entries").select("*").order("date", { ascending: false }),
       supabaseClient.from("targets").select("*").eq("user_id", userId).maybeSingle(),
@@ -952,6 +961,8 @@ function TradeJournal({ session, onLogout }) {
       supabaseClient.from("trade_confluences").select("*"),
       supabaseClient.from("patterns").select("*"),
       supabaseClient.from("pattern_confluences").select("*"),
+      supabaseClient.from("target_tags").select("*").order("name", { ascending: true }),
+      supabaseClient.from("trade_target_tags").select("*"),
     ]);
     if (tradesRes.error) throw tradesRes.error;
     if (entriesRes.error) throw entriesRes.error;
@@ -961,6 +972,8 @@ function TradeJournal({ session, onLogout }) {
     if (tradeConfluencesRes.error) throw tradeConfluencesRes.error;
     if (patternsRes.error) throw patternsRes.error;
     if (patternConfluencesRes.error) throw patternConfluencesRes.error;
+    if (targetTagsRes.error) throw targetTagsRes.error;
+    if (tradeTargetTagsRes.error) throw tradeTargetTagsRes.error;
 
     const mediaByTrade = {};
     (mediaRes.data || []).forEach((row) => {
@@ -980,6 +993,8 @@ function TradeJournal({ session, onLogout }) {
     setTradeConfluenceLinks(tradeConfluencesRes.data || []);
     setPatternsList(patternsRes.data || []);
     setPatternConfluenceLinks(patternConfluencesRes.data || []);
+    setTargetTagsList(targetTagsRes.data || []);
+    setTradeTargetTagLinks(tradeTargetTagsRes.data || []);
   }
 
   useEffect(() => {
@@ -1079,21 +1094,47 @@ function TradeJournal({ session, onLogout }) {
     setConfluencesList(confluencesList.filter((c) => c.id !== id));
     setTradeConfluenceLinks(tradeConfluenceLinks.filter((l) => l.confluence_id !== id));
     setPatternConfluenceLinks(patternConfluenceLinks.filter((l) => l.confluence_id !== id));
-    setTConfluences(tConfluences.filter((cid) => cid !== id));
+    setTConfluenceEntries(tConfluenceEntries.filter((e) => e.confluenceId !== id));
   }
 
-  function toggleConfluence(id) {
-    setTConfluences((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-    setTConfluenceTimeframes((prev) => {
-      if (prev[id] === undefined) return prev;
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
+  // A trade can carry the same confluence more than once (different
+  // timeframes each time), so selections are an appendable list of entries
+  // rather than a toggled set of ids.
+  function addConfluenceEntry() {
+    if (!pickConfluenceId) return;
+    setTConfluenceEntries((prev) => [...prev, { localId: uid(), confluenceId: pickConfluenceId, timeframe: pickTimeframe || null }]);
+    setPickTimeframe("");
   }
 
-  function setConfluenceTimeframe(id, timeframe) {
-    setTConfluenceTimeframes((prev) => ({ ...prev, [id]: timeframe }));
+  function removeConfluenceEntry(localId) {
+    setTConfluenceEntries((prev) => prev.filter((e) => e.localId !== localId));
+  }
+
+  // ---- Target tags — same shape as confluences, separate category, no repeats ----
+  async function addTargetTag(e) {
+    e.preventDefault();
+    setPatternFormError(null);
+    const name = newTargetTagName.trim();
+    if (!name) { setPatternFormError("Enter a target name."); return; }
+    const { data, error } = await supabaseClient.from("target_tags").insert({ user_id: userId, name }).select().single();
+    if (error) {
+      setPatternFormError(error.code === "23505" ? "You already have a target with that name." : "Couldn't save that target.");
+      return;
+    }
+    setTargetTagsList([...targetTagsList, data].sort((a, b) => a.name.localeCompare(b.name)));
+    setNewTargetTagName("");
+  }
+
+  async function deleteTargetTag(id) {
+    const { error } = await supabaseClient.from("target_tags").delete().eq("id", id);
+    if (error) { setPatternFormError("Couldn't delete that target."); return; }
+    setTargetTagsList(targetTagsList.filter((t) => t.id !== id));
+    setTradeTargetTagLinks(tradeTargetTagLinks.filter((l) => l.target_tag_id !== id));
+    setTTargetTags(tTargetTags.filter((tid) => tid !== id));
+  }
+
+  function toggleTargetTag(id) {
+    setTTargetTags((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
 
   // ---- Patterns — a specific combination of confluences, auto-created the first
@@ -1218,20 +1259,27 @@ function TradeJournal({ session, onLogout }) {
     const next = [{ ...rowToTrade(data), media: [] }, ...trades].sort((a, b) => (a.date < b.date ? 1 : -1));
     setTrades(next);
 
-    if (tConfluences.length) {
-      const linkRows = tConfluences.map((confluenceId) => ({
-        trade_id: data.id, confluence_id: confluenceId, user_id: userId,
-        timeframe: tConfluenceTimeframes[confluenceId] || null,
+    if (tConfluenceEntries.length) {
+      const linkRows = tConfluenceEntries.map((entry) => ({
+        trade_id: data.id, confluence_id: entry.confluenceId, user_id: userId,
+        timeframe: entry.timeframe || null,
       }));
       const { data: insertedLinks, error: linkErr } = await supabaseClient.from("trade_confluences").insert(linkRows).select();
       if (!linkErr) setTradeConfluenceLinks([...tradeConfluenceLinks, ...insertedLinks]);
-      await ensurePatternForConfluences(tConfluences);
+      const distinctConfluenceIds = Array.from(new Set(tConfluenceEntries.map((e) => e.confluenceId)));
+      await ensurePatternForConfluences(distinctConfluenceIds);
+    }
+
+    if (tTargetTags.length) {
+      const targetLinkRows = tTargetTags.map((targetTagId) => ({ trade_id: data.id, target_tag_id: targetTagId, user_id: userId }));
+      const { data: insertedTargetLinks, error: targetLinkErr } = await supabaseClient.from("trade_target_tags").insert(targetLinkRows).select();
+      if (!targetLinkErr) setTradeTargetTagLinks([...tradeTargetTagLinks, ...insertedTargetLinks]);
     }
 
     setSaveError(null);
-    setTConfluenceTimeframes({});
     setTPnl(""); setTDurH(""); setTDurM(""); setTDurS(""); setTSymbol("");
-    setTRisk(""); setTRR(""); setTSide("long"); setTGrade(""); setTEntryType("trade"); setTConfluences([]);
+    setTRisk(""); setTRR(""); setTSide("long"); setTGrade(""); setTEntryType("trade");
+    setTConfluenceEntries([]); setPickConfluenceId(""); setPickTimeframe(""); setTTargetTags([]);
   }
 
   async function addEntry(e) {
@@ -1445,12 +1493,17 @@ function TradeJournal({ session, onLogout }) {
   const worstPattern = patternStats[patternStats.length - 1];
 
   const confluenceNameById = Object.fromEntries(confluencesList.map((c) => [c.id, c.name]));
-  const tradeConfluenceMap = {}; // trade_id -> sorted confluence_id[]
+  const tradeConfluenceMap = {}; // trade_id -> sorted, deduped confluence_id[]
   tradeConfluenceLinks.forEach((l) => {
     if (!tradeConfluenceMap[l.trade_id]) tradeConfluenceMap[l.trade_id] = [];
     tradeConfluenceMap[l.trade_id].push(l.confluence_id);
   });
-  Object.values(tradeConfluenceMap).forEach((arr) => arr.sort());
+  // A trade can carry the same confluence twice (different timeframes) — for
+  // pattern matching, what matters is which confluences were present, not
+  // how many times each was tagged, so dedupe before comparing sets.
+  Object.keys(tradeConfluenceMap).forEach((k) => {
+    tradeConfluenceMap[k] = Array.from(new Set(tradeConfluenceMap[k])).sort();
+  });
   const patternConfluenceMap = {}; // pattern_id -> sorted confluence_id[]
   patternConfluenceLinks.forEach((l) => {
     if (!patternConfluenceMap[l.pattern_id]) patternConfluenceMap[l.pattern_id] = [];
@@ -1810,35 +1863,56 @@ function TradeJournal({ session, onLogout }) {
                   {confluencesList.length === 0 ? (
                     <div style={{ fontSize: 12.5, color: COLORS.textMuted }}>No confluences yet — add some in the Patterns tab.</div>
                   ) : (
+                    <>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: tConfluenceEntries.length ? 10 : 0 }}>
+                        <select value={pickConfluenceId} onChange={(e) => setPickConfluenceId(e.target.value)} style={{ ...inputStyle_(), width: "auto" }}>
+                          <option value="">Select confluence…</option>
+                          {confluencesList.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                        <select value={pickTimeframe} onChange={(e) => setPickTimeframe(e.target.value)} style={{ ...inputStyle_(), width: "auto" }}>
+                          <option value="">Timeframe</option>
+                          {TIMEFRAMES.map((tf) => <option key={tf.value} value={tf.value}>{tf.label}</option>)}
+                        </select>
+                        <button type="button" onClick={addConfluenceEntry} disabled={!pickConfluenceId} style={{ ...ghostBtnStyle_(), opacity: pickConfluenceId ? 1 : 0.5 }}>+ Add</button>
+                      </div>
+                      {tConfluenceEntries.length > 0 && (
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          {tConfluenceEntries.map((entry) => {
+                            const conf = confluencesList.find((c) => c.id === entry.confluenceId);
+                            const tfLabel = entry.timeframe ? TIMEFRAME_LABEL[entry.timeframe] : null;
+                            return (
+                              <span key={entry.localId} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: COLORS.accentSoft, border: `1.5px solid ${COLORS.accent}`, color: COLORS.accent, borderRadius: 20, padding: "6px 8px 6px 14px", fontSize: 12.5, fontWeight: 600 }}>
+                                {conf ? conf.name : "?"}{tfLabel ? ` (${tfLabel})` : ""}
+                                <button type="button" onClick={() => removeConfluenceEntry(entry.localId)} style={{ ...deleteBtnStyle_(), padding: 0, fontSize: 12 }} aria-label="Remove">✕</button>
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </Field>
+              )}
+              {tEntryType === "trade" && (
+                <Field label="Targets (optional)">
+                  {targetTagsList.length === 0 ? (
+                    <div style={{ fontSize: 12.5, color: COLORS.textMuted }}>No targets yet — add some in the Patterns tab.</div>
+                  ) : (
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      {confluencesList.map((c) => {
-                        const active = tConfluences.includes(c.id);
+                      {targetTagsList.map((tg) => {
+                        const active = tTargetTags.includes(tg.id);
                         return (
-                          <div key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                            <button
-                              type="button" onClick={() => toggleConfluence(c.id)}
-                              style={{
-                                background: active ? COLORS.accentSoft : COLORS.subtleBg,
-                                border: `1.5px solid ${active ? COLORS.accent : COLORS.border}`,
-                                color: active ? COLORS.accent : COLORS.textMuted,
-                                padding: "6px 14px", borderRadius: 20, fontSize: 12.5, fontWeight: 600, cursor: "pointer",
-                              }}
-                            >
-                              {c.name}
-                            </button>
-                            {active && (
-                              <select
-                                value={tConfluenceTimeframes[c.id] || ""}
-                                onChange={(e) => setConfluenceTimeframe(c.id, e.target.value)}
-                                style={{ ...inputStyle_(), width: "auto", padding: "6px 10px", fontSize: 12.5 }}
-                              >
-                                <option value="">Timeframe</option>
-                                {TIMEFRAMES.map((tf) => (
-                                  <option key={tf.value} value={tf.value}>{tf.label}</option>
-                                ))}
-                              </select>
-                            )}
-                          </div>
+                          <button
+                            type="button" key={tg.id} onClick={() => toggleTargetTag(tg.id)}
+                            style={{
+                              background: active ? COLORS.accentSoft : COLORS.subtleBg,
+                              border: `1.5px solid ${active ? COLORS.accent : COLORS.border}`,
+                              color: active ? COLORS.accent : COLORS.textMuted,
+                              padding: "6px 14px", borderRadius: 20, fontSize: 12.5, fontWeight: 600, cursor: "pointer",
+                            }}
+                          >
+                            {tg.name}
+                          </button>
                         );
                       })}
                     </div>
@@ -2400,6 +2474,27 @@ function TradeJournal({ session, onLogout }) {
               </div>
             )}
 
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Targets</div>
+            <form onSubmit={addTargetTag} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+              <Field label="New target name" style={{ flex: "1 1 220px" }}>
+                <input type="text" value={newTargetTagName} onChange={(e) => setNewTargetTagName(e.target.value)} placeholder="e.g. Previous day high" style={inputStyle_()} />
+              </Field>
+              <button type="submit" style={primaryBtnStyle_()}>Add target</button>
+            </form>
+
+            {targetTagsList.length === 0 ? (
+              <EmptyState text="No targets yet. Add some above, then select them on a trade in Add Trade." />
+            ) : (
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 28 }}>
+                {targetTagsList.map((tg) => (
+                  <span key={tg.id} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: COLORS.subtleBg, border: `1.5px solid ${COLORS.border}`, borderRadius: 20, padding: "6px 8px 6px 14px", fontSize: 12.5, fontWeight: 600, color: COLORS.text }}>
+                    {tg.name}
+                    <button onClick={() => deleteTargetTag(tg.id)} style={{ ...deleteBtnStyle_(), padding: 0, fontSize: 12 }} aria-label={`Delete ${tg.name}`}>✕</button>
+                  </span>
+                ))}
+              </div>
+            )}
+
             <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Patterns</div>
             {patternsList.length === 0 ? (
               <EmptyState text="Patterns are built automatically: tag a trade with a combination of confluences (in Add Trade), and that combination shows up here to grade and track." />
@@ -2825,6 +2920,10 @@ function TradeJournal({ session, onLogout }) {
             return tfLabel ? `${conf.name} (${tfLabel})` : conf.name;
           })
           .filter(Boolean);
+        const tradeTargetTagNames = tradeTargetTagLinks
+          .filter((l) => l.trade_id === t.id)
+          .map((l) => { const tg = targetTagsList.find((x) => x.id === l.target_tag_id); return tg ? tg.name : null; })
+          .filter(Boolean);
         const fields = [
           { label: "Date", value: t.date },
           { label: "Symbol", value: t.symbol || "—" },
@@ -2835,6 +2934,7 @@ function TradeJournal({ session, onLogout }) {
           { label: "R:R", value: t.rr !== null && t.rr !== undefined ? `${t.rr}R` : "—" },
           { label: "Grade", value: t.grade || "—", color: t.grade ? gradeColor(t.grade) : null },
           { label: "Confluences", value: tradeConfluenceNames.length ? tradeConfluenceNames.join(", ") : "—" },
+          { label: "Targets", value: tradeTargetTagNames.length ? tradeTargetTagNames.join(", ") : "—" },
         ];
         return (
           <div onClick={() => setViewTradeId(null)} style={{ position: "fixed", inset: 0, background: "rgba(20,20,35,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 55 }}>

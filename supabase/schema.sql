@@ -361,13 +361,34 @@ create policy "delete own confluences" on public.confluences
 -- =========================================================================
 -- trade_confluences — many-to-many: which confluences were tagged on a trade
 -- =========================================================================
+-- No composite primary key here on purpose — the same confluence can be
+-- tagged onto one trade more than once (e.g. IFVG on the 5m AND the 1h), so
+-- each row needs its own surrogate id instead of being unique per
+-- (trade_id, confluence_id).
 create table if not exists public.trade_confluences (
+  id uuid primary key default gen_random_uuid(),
   trade_id uuid not null references public.trades (id) on delete cascade,
   confluence_id uuid not null references public.confluences (id) on delete cascade,
   user_id uuid not null references public.profiles (id) on delete cascade,
-  timeframe text,
-  primary key (trade_id, confluence_id)
+  timeframe text
 );
+
+-- Migrate a pre-existing table (created before repeat-tagging was
+-- supported) from its old (trade_id, confluence_id) primary key to the new
+-- surrogate id — guarded so it only runs once.
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'trade_confluences' and column_name = 'id'
+  ) then
+    alter table public.trade_confluences add column id uuid default gen_random_uuid();
+    update public.trade_confluences set id = gen_random_uuid() where id is null;
+    alter table public.trade_confluences alter column id set not null;
+    alter table public.trade_confluences drop constraint if exists trade_confluences_pkey;
+    alter table public.trade_confluences add constraint trade_confluences_pkey primary key (id);
+  end if;
+end $$;
 
 alter table public.trade_confluences add column if not exists timeframe text;
 
@@ -388,6 +409,58 @@ create policy "insert own trade confluences" on public.trade_confluences
   for insert with check (auth.uid() = user_id);
 drop policy if exists "delete own trade confluences" on public.trade_confluences;
 create policy "delete own trade confluences" on public.trade_confluences
+  for delete using (auth.uid() = user_id);
+
+-- =========================================================================
+-- target_tags — atomic, user-named tags, same shape/purpose as confluences
+-- but a separate category selected in its own Add Trade field. (Named
+-- "target_tags" rather than "targets" to avoid colliding with the existing
+-- `targets` table, which is the unrelated profit-target/max-loss settings.)
+-- =========================================================================
+create table if not exists public.target_tags (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  name text not null,
+  created_at timestamptz not null default now(),
+  unique (user_id, name)
+);
+
+alter table public.target_tags enable row level security;
+
+drop policy if exists "select own target tags" on public.target_tags;
+create policy "select own target tags" on public.target_tags
+  for select using (auth.uid() = user_id);
+drop policy if exists "insert own target tags" on public.target_tags;
+create policy "insert own target tags" on public.target_tags
+  for insert with check (auth.uid() = user_id);
+drop policy if exists "delete own target tags" on public.target_tags;
+create policy "delete own target tags" on public.target_tags
+  for delete using (auth.uid() = user_id);
+
+-- =========================================================================
+-- trade_target_tags — many-to-many: which target tags were selected on a
+-- trade. Unlike trade_confluences, one row per (trade, tag) — no repeats.
+-- =========================================================================
+create table if not exists public.trade_target_tags (
+  trade_id uuid not null references public.trades (id) on delete cascade,
+  target_tag_id uuid not null references public.target_tags (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  primary key (trade_id, target_tag_id)
+);
+
+create index if not exists trade_target_tags_trade_idx on public.trade_target_tags (trade_id);
+create index if not exists trade_target_tags_tag_idx on public.trade_target_tags (target_tag_id);
+
+alter table public.trade_target_tags enable row level security;
+
+drop policy if exists "select own trade target tags" on public.trade_target_tags;
+create policy "select own trade target tags" on public.trade_target_tags
+  for select using (auth.uid() = user_id);
+drop policy if exists "insert own trade target tags" on public.trade_target_tags;
+create policy "insert own trade target tags" on public.trade_target_tags
+  for insert with check (auth.uid() = user_id);
+drop policy if exists "delete own trade target tags" on public.trade_target_tags;
+create policy "delete own trade target tags" on public.trade_target_tags
   for delete using (auth.uid() = user_id);
 
 -- =========================================================================
