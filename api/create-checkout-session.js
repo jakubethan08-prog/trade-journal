@@ -34,8 +34,17 @@ module.exports = async function handler(req, res) {
   }
   const user = userData.user;
 
-  if (!process.env.SITE_URL) {
+  // Trim whitespace and a trailing slash defensively — Stripe rejects the
+  // whole request if this isn't a clean absolute URL.
+  const siteUrl = (process.env.SITE_URL || "").trim().replace(/\/+$/, "");
+  if (!siteUrl) {
     res.status(500).json({ error: "Server misconfigured: SITE_URL is not set" });
+    return;
+  }
+  if (!/^https?:\/\//i.test(siteUrl)) {
+    res.status(500).json({
+      error: `Server misconfigured: SITE_URL must start with http:// or https:// (currently: ${JSON.stringify(siteUrl)})`,
+    });
     return;
   }
   if (!process.env.STRIPE_PRICE_ID) {
@@ -69,13 +78,13 @@ module.exports = async function handler(req, res) {
       mode: "subscription",
       customer: customerId,
       line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
-      success_url: `${process.env.SITE_URL}/?checkout=success`,
-      cancel_url: `${process.env.SITE_URL}/?checkout=cancel`,
+      success_url: `${siteUrl}/?checkout=success`,
+      cancel_url: `${siteUrl}/?checkout=cancel`,
     });
 
     res.status(200).json({ url: checkoutSession.url });
   } catch (err) {
     console.error("create-checkout-session error:", err);
-    res.status(500).json({ error: "Could not start checkout" });
+    res.status(500).json({ error: `Could not start checkout: ${err.message || err.type || "unknown error"}` });
   }
 };
