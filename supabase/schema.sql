@@ -841,3 +841,35 @@ create policy "select group-tagged trades for group members" on public.trades
       where gtc.trade_id = trades.id and public.is_group_member(gtc.group_id, auth.uid())
     )
   );
+
+-- =========================================================================
+-- Group chat background — a solid color and/or an uploaded image, set from
+-- the group's Settings view.
+-- =========================================================================
+alter table public.groups add column if not exists background_color text;
+alter table public.groups add column if not exists background_image_path text;
+
+-- Private bucket — same signed-URL pattern as trade-media. Path convention:
+-- {group_id}/{random}-{filename}
+insert into storage.buckets (id, name, public)
+values ('group-backgrounds', 'group-backgrounds', false)
+on conflict (id) do nothing;
+
+drop policy if exists "select group background images" on storage.objects;
+create policy "select group background images" on storage.objects
+  for select using (
+    bucket_id = 'group-backgrounds'
+    and public.is_group_member(((storage.foldername(name))[1])::uuid, auth.uid())
+  );
+drop policy if exists "insert group background images" on storage.objects;
+create policy "insert group background images" on storage.objects
+  for insert with check (
+    bucket_id = 'group-backgrounds'
+    and public.is_group_member(((storage.foldername(name))[1])::uuid, auth.uid())
+  );
+drop policy if exists "delete group background images" on storage.objects;
+create policy "delete group background images" on storage.objects
+  for delete using (
+    bucket_id = 'group-backgrounds'
+    and public.is_group_member(((storage.foldername(name))[1])::uuid, auth.uid())
+  );

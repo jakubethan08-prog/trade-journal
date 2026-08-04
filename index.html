@@ -195,6 +195,22 @@ async function removeMediaFiles(paths) {
   if (error) throw error;
 }
 
+// ---- Group chat background storage (same signed-URL pattern as trade media) ----
+const GROUP_BG_BUCKET = "group-backgrounds";
+async function uploadGroupBackgroundFile(path, file) {
+  const { error } = await supabaseClient.storage.from(GROUP_BG_BUCKET).upload(path, file, { upsert: true });
+  if (error) throw error;
+}
+async function getGroupBackgroundSignedUrl(path) {
+  const { data, error } = await supabaseClient.storage.from(GROUP_BG_BUCKET).createSignedUrl(path, 3600);
+  if (error) throw error;
+  return data.signedUrl;
+}
+async function removeGroupBackgroundFile(path) {
+  const { error } = await supabaseClient.storage.from(GROUP_BG_BUCKET).remove([path]);
+  if (error) throw error;
+}
+
 // ---- Supabase row <-> app object mapping ----
 function rowToTrade(row) {
   return {
@@ -1196,6 +1212,15 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const [tagTargetTagIds, setTagTargetTagIds] = useState([]);
   const [tagError, setTagError] = useState(null);
   const [groupTaggedTrades, setGroupTaggedTrades] = useState({}); // trade_id -> { pnl, entryType }
+  const [groupWindowMode, setGroupWindowMode] = useState("fullscreen"); // 'fullscreen' | 'windowed'
+  const [groupWinPos, setGroupWinPos] = useState({ x: 100, y: 60 });
+  const [groupWinSize, setGroupWinSize] = useState({ w: 640, h: 600 });
+  const groupDragRef = useRef(null);
+  const groupResizeRef = useRef(null);
+  const [groupBackgroundColor, setGroupBackgroundColor] = useState("");
+  const [groupBackgroundImagePath, setGroupBackgroundImagePath] = useState("");
+  const [groupBackgroundImageUrl, setGroupBackgroundImageUrl] = useState("");
+  const [groupBackgroundBusy, setGroupBackgroundBusy] = useState(false);
 
   // Confluences: atomic named tags (e.g. "IFVG"), picked in Add Trade. The
   // same confluence can be added more than once on one trade (different
@@ -1465,17 +1490,21 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     setGroupDataError(null);
     setGroupSettingsError(null);
     setTagTradeId(""); setTagConfluenceIds([]); setTagTargetTagIds([]); setTagError(null);
+    setGroupWindowMode("fullscreen");
+    setGroupBackgroundColor(""); setGroupBackgroundImagePath(""); setGroupBackgroundImageUrl("");
   }
 
   async function openGroupModal(group) {
     setOpenGroup({ id: group.id, name: group.name });
     setGroupView("chat");
+    setGroupWindowMode("fullscreen");
     setGroupNameDraft(group.name);
     setGroupSettingsError(null);
     setGroupDataLoading(true);
     setGroupDataError(null);
     try {
-      const [membersRes, messagesRes, confluencesRes, targetTagsRes, tradeConfluencesRes, tradeTargetTagsRes, patternsRes, patternConfluencesRes] = await Promise.all([
+      const [groupRowRes, membersRes, messagesRes, confluencesRes, targetTagsRes, tradeConfluencesRes, tradeTargetTagsRes, patternsRes, patternConfluencesRes] = await Promise.all([
+        supabaseClient.from("groups").select("background_color, background_image_path").eq("id", group.id).single(),
         supabaseClient.from("group_members").select("user_id").eq("group_id", group.id),
         supabaseClient.from("group_messages").select("*").eq("group_id", group.id).order("created_at", { ascending: true }),
         supabaseClient.from("group_confluences").select("*").eq("group_id", group.id).order("name", { ascending: true }),
@@ -1485,6 +1514,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
         supabaseClient.from("group_patterns").select("*").eq("group_id", group.id),
         supabaseClient.from("group_pattern_confluences").select("*").eq("group_id", group.id),
       ]);
+      if (groupRowRes.error) throw groupRowRes.error;
       if (membersRes.error) throw membersRes.error;
       if (messagesRes.error) throw messagesRes.error;
       if (confluencesRes.error) throw confluencesRes.error;
@@ -1493,6 +1523,20 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       if (tradeTargetTagsRes.error) throw tradeTargetTagsRes.error;
       if (patternsRes.error) throw patternsRes.error;
       if (patternConfluencesRes.error) throw patternConfluencesRes.error;
+
+      setGroupBackgroundColor(groupRowRes.data.background_color || "");
+      const bgPath = groupRowRes.data.background_image_path || "";
+      setGroupBackgroundImagePath(bgPath);
+      if (bgPath) {
+        try {
+          const url = await getGroupBackgroundSignedUrl(bgPath);
+          setGroupBackgroundImageUrl(url);
+        } catch (e) {
+          setGroupBackgroundImageUrl("");
+        }
+      } else {
+        setGroupBackgroundImageUrl("");
+      }
 
       const memberIds = (membersRes.data || []).map((m) => m.user_id);
       let profilesById = {};
@@ -1523,6 +1567,94 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       setGroupDataError("Couldn't load this group.");
     } finally {
       setGroupDataLoading(false);
+    }
+  }
+
+  // Drag-to-move and drag-to-resize for the group window when it's not full screen.
+  useEffect(() => {
+    function handleMove(e) {
+      if (groupDragRef.current) {
+        const d = groupDragRef.current;
+        setGroupWinPos({
+          x: Math.min(Math.max(0, e.clientX - d.offsetX), window.innerWidth - 120),
+          y: Math.min(Math.max(0, e.clientY - d.offsetY), window.innerHeight - 60),
+        });
+      }
+      if (groupResizeRef.current) {
+        const r = groupResizeRef.current;
+        setGroupWinSize({
+          w: Math.max(360, Math.min(window.innerWidth - r.startLeft, r.startW + (e.clientX - r.startX))),
+          h: Math.max(320, Math.min(window.innerHeight - r.startTop, r.startH + (e.clientY - r.startY))),
+        });
+      }
+    }
+    function handleUp() {
+      groupDragRef.current = null;
+      groupResizeRef.current = null;
+    }
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    };
+  }, []);
+
+  function startGroupDrag(e) {
+    if (groupWindowMode !== "windowed") return;
+    groupDragRef.current = { offsetX: e.clientX - groupWinPos.x, offsetY: e.clientY - groupWinPos.y };
+  }
+  function startGroupResize(e) {
+    e.stopPropagation();
+    groupResizeRef.current = { startX: e.clientX, startY: e.clientY, startW: groupWinSize.w, startH: groupWinSize.h, startLeft: groupWinPos.x, startTop: groupWinPos.y };
+  }
+
+  async function updateGroupBackgroundColor(color) {
+    if (!openGroup) return;
+    setGroupBackgroundColor(color);
+    const { error } = await supabaseClient.from("groups").update({ background_color: color || null }).eq("id", openGroup.id);
+    if (error) setGroupSettingsError("Couldn't save the background color.");
+  }
+
+  async function uploadGroupBackground(file) {
+    if (!openGroup || !file) return;
+    setGroupBackgroundBusy(true);
+    setGroupSettingsError(null);
+    const oldPath = groupBackgroundImagePath;
+    try {
+      const path = `${openGroup.id}/${uid()}-${file.name}`;
+      await uploadGroupBackgroundFile(path, file);
+      const { error } = await supabaseClient.from("groups").update({ background_image_path: path }).eq("id", openGroup.id);
+      if (error) throw error;
+      if (oldPath) {
+        try { await removeGroupBackgroundFile(oldPath); } catch (e) { /* best effort */ }
+      }
+      const url = await getGroupBackgroundSignedUrl(path);
+      setGroupBackgroundImagePath(path);
+      setGroupBackgroundImageUrl(url);
+    } catch (e) {
+      setGroupSettingsError("Couldn't upload that image.");
+    } finally {
+      setGroupBackgroundBusy(false);
+    }
+  }
+
+  async function removeGroupBackground() {
+    if (!openGroup) return;
+    setGroupBackgroundBusy(true);
+    setGroupSettingsError(null);
+    try {
+      if (groupBackgroundImagePath) {
+        try { await removeGroupBackgroundFile(groupBackgroundImagePath); } catch (e) { /* best effort */ }
+      }
+      const { error } = await supabaseClient.from("groups").update({ background_image_path: null }).eq("id", openGroup.id);
+      if (error) throw error;
+      setGroupBackgroundImagePath("");
+      setGroupBackgroundImageUrl("");
+    } catch (e) {
+      setGroupSettingsError("Couldn't remove the background image.");
+    } finally {
+      setGroupBackgroundBusy(false);
     }
   }
 
@@ -3800,17 +3932,43 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           return { id: p.id, label, grade: p.grade, count, total, winRateP };
         });
 
+        const isGroupFullscreen = groupWindowMode === "fullscreen";
+        const groupContainerStyle = isGroupFullscreen
+          ? { position: "fixed", inset: 0, zIndex: 65, background: COLORS.bg, display: "flex", flexDirection: "column" }
+          : {
+              position: "fixed", left: groupWinPos.x, top: groupWinPos.y, width: groupWinSize.w, height: groupWinSize.h,
+              zIndex: 65, background: COLORS.bg, borderRadius: 14, border: `1px solid ${COLORS.border}`,
+              boxShadow: "0 20px 60px rgba(20,20,35,0.45)", display: "flex", flexDirection: "column", overflow: "hidden",
+            };
+
         return (
-          <div onClick={closeGroupModal} style={{ position: "fixed", inset: 0, background: "rgba(20,20,35,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 65 }}>
-            <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.card, borderRadius: 16, width: "100%", maxWidth: 640, height: "82vh", boxShadow: "0 20px 60px rgba(20,20,35,0.35)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: `1px solid ${COLORS.border}` }}>
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 700 }}>{openGroup.name}</div>
-                  <div style={{ fontSize: 11.5, color: COLORS.textMuted }}>{groupMembers.length} member{groupMembers.length === 1 ? "" : "s"}</div>
-                </div>
+          <div style={groupContainerStyle}>
+            <div
+              onMouseDown={startGroupDrag}
+              style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 20px",
+                borderBottom: `1px solid ${COLORS.border}`, background: COLORS.card, userSelect: "none",
+                cursor: isGroupFullscreen ? "default" : "grab", flexShrink: 0,
+              }}
+            >
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700 }}>{openGroup.name}</div>
+                <div style={{ fontSize: 11.5, color: COLORS.textMuted }}>{groupMembers.length} member{groupMembers.length === 1 ? "" : "s"}</div>
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button
+                  onClick={() => setGroupWindowMode(isGroupFullscreen ? "windowed" : "fullscreen")}
+                  style={deleteBtnStyle_()}
+                  aria-label={isGroupFullscreen ? "Exit full screen" : "Full screen"}
+                  title={isGroupFullscreen ? "Exit full screen" : "Full screen"}
+                >
+                  {isGroupFullscreen ? "⤡" : "⤢"}
+                </button>
                 <button onClick={closeGroupModal} style={deleteBtnStyle_()} aria-label="Close">✕</button>
               </div>
+            </div>
 
+            <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
               {groupDataLoading ? (
                 <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.textMuted, fontSize: 13 }}>Loading…</div>
               ) : groupDataError ? (
@@ -3874,10 +4032,56 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                       ))}
                     </div>
                   </div>
+
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>CHAT BACKGROUND</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                      <span style={{ fontSize: 12.5, color: COLORS.textMuted }}>Color</span>
+                      <input
+                        type="color"
+                        value={groupBackgroundColor || (theme === "dark" ? "#12141C" : "#F3F4F9")}
+                        onChange={(e) => updateGroupBackgroundColor(e.target.value)}
+                        style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
+                      />
+                      {groupBackgroundColor && (
+                        <button type="button" onClick={() => updateGroupBackgroundColor("")} style={{ ...ghostBtnStyle_(), fontSize: 11, padding: "4px 10px" }}>
+                          Reset color
+                        </button>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                      <label style={{ ...ghostBtnStyle_(), cursor: groupBackgroundBusy ? "default" : "pointer", opacity: groupBackgroundBusy ? 0.7 : 1 }}>
+                        {groupBackgroundBusy ? "Uploading…" : "Upload image"}
+                        <input
+                          type="file" accept="image/*" disabled={groupBackgroundBusy}
+                          onChange={(e) => { if (e.target.files[0]) uploadGroupBackground(e.target.files[0]); e.target.value = ""; }}
+                          style={{ display: "none" }}
+                        />
+                      </label>
+                      {groupBackgroundImageUrl && (
+                        <button type="button" onClick={removeGroupBackground} disabled={groupBackgroundBusy} style={ghostBtnStyle_()}>
+                          Remove image
+                        </button>
+                      )}
+                    </div>
+                    {groupBackgroundImageUrl && (
+                      <img
+                        src={groupBackgroundImageUrl} alt="Chat background preview"
+                        style={{ width: 140, height: 78, objectFit: "cover", borderRadius: 8, marginTop: 10, border: `1px solid ${COLORS.border}` }}
+                      />
+                    )}
+                  </div>
                 </div>
               ) : (
                 <>
-                  <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
+                  <div
+                    style={{
+                      flex: 1, overflowY: "auto", padding: 20,
+                      backgroundColor: groupBackgroundImageUrl ? undefined : (groupBackgroundColor || "transparent"),
+                      backgroundImage: groupBackgroundImageUrl ? `url(${groupBackgroundImageUrl})` : "none",
+                      backgroundSize: "cover", backgroundPosition: "center", backgroundRepeat: "no-repeat",
+                    }}
+                  >
                     <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>TRADING PATTERNS</div>
                     {groupPatternPerf.length === 0 ? (
                       <EmptyState text="No group patterns yet — add confluences in Settings (gear icon below), then tag a trade below." />
@@ -3983,6 +4187,17 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                 </>
               )}
             </div>
+
+            {!isGroupFullscreen && (
+              <div
+                onMouseDown={startGroupResize}
+                style={{ position: "absolute", right: 0, bottom: 0, width: 20, height: 20, cursor: "nwse-resize" }}
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" style={{ position: "absolute", right: 3, bottom: 3, opacity: 0.5, pointerEvents: "none" }}>
+                  <path d="M12 2 L2 12 M12 7 L7 12" stroke={COLORS.textMuted} strokeWidth="1.5" />
+                </svg>
+              </div>
+            )}
           </div>
         );
       })()}
