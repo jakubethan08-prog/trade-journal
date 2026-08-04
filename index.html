@@ -936,6 +936,8 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const [nicknameBusy, setNicknameBusy] = useState(false);
   const [nicknameError, setNicknameError] = useState(null);
   const [nicknameSavedMsg, setNicknameSavedMsg] = useState(false);
+  const [friendCalMonth, setFriendCalMonth] = useState(() => new Date().getMonth());
+  const [friendCalYear, setFriendCalYear] = useState(() => new Date().getFullYear());
 
   // Confluences: atomic named tags (e.g. "IFVG"), picked in Add Trade. The
   // same confluence can be added more than once on one trade (different
@@ -1087,6 +1089,8 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     setFriendTrades([]);
     setFriendTradesError(null);
     setFriendTradesLoading(true);
+    setFriendCalMonth(new Date().getMonth());
+    setFriendCalYear(new Date().getFullYear());
     try {
       const { data, error } = await supabaseClient
         .from("trades")
@@ -1593,7 +1597,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   }, {});
 
   function pad2(n) { return String(n).padStart(2, "0"); }
-  function buildCalendarWeeks(year, month) {
+  function buildCalendarWeeks(dayMapArg, year, month) {
     const firstOfMonth = new Date(year, month, 1);
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const startWeekday = firstOfMonth.getDay(); // 0 = Sun
@@ -1601,7 +1605,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     for (let i = 0; i < startWeekday; i++) cells.push(null);
     for (let d = 1; d <= daysInMonth; d++) {
       const dateStr = `${year}-${pad2(month + 1)}-${pad2(d)}`;
-      cells.push({ day: d, dateStr, data: dayMap[dateStr] || null });
+      cells.push({ day: d, dateStr, data: dayMapArg[dateStr] || null });
     }
     while (cells.length % 7 !== 0) cells.push(null);
     const weeks = [];
@@ -1614,7 +1618,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     }
     return weeks;
   }
-  const calendarWeeks = buildCalendarWeeks(calYear, calMonth);
+  const calendarWeeks = buildCalendarWeeks(dayMap, calYear, calMonth);
   const firstEntryDate = trades.length ? [...trades].sort((a, b) => (a.date < b.date ? -1 : 1))[0].date : null;
   const firstEntryYear = firstEntryDate ? Number(firstEntryDate.slice(0, 4)) : null;
   const firstEntryMonth = firstEntryDate ? Number(firstEntryDate.slice(5, 7)) - 1 : null;
@@ -3090,6 +3094,24 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           }
         }
 
+        const friendDayMap = friendTrades.reduce((acc, t) => {
+          if (!acc[t.date]) acc[t.date] = { total: 0, count: 0, wins: 0, payoutTotal: 0 };
+          if (t.entryType === "payout") {
+            acc[t.date].payoutTotal += t.pnl;
+          } else {
+            acc[t.date].total += t.pnl;
+            acc[t.date].count += 1;
+            if (t.pnl > 0) acc[t.date].wins += 1;
+          }
+          return acc;
+        }, {});
+        const friendCalendarWeeks = buildCalendarWeeks(friendDayMap, friendCalYear, friendCalMonth);
+        const friendFirstEntryDate = chronoF.length ? chronoF[0].date : null;
+        const friendFirstEntryYear = friendFirstEntryDate ? Number(friendFirstEntryDate.slice(0, 4)) : null;
+        const friendFirstEntryMonth = friendFirstEntryDate ? Number(friendFirstEntryDate.slice(5, 7)) - 1 : null;
+        const friendAtEarliestMonth = friendFirstEntryDate !== null && (friendCalYear < friendFirstEntryYear || (friendCalYear === friendFirstEntryYear && friendCalMonth <= friendFirstEntryMonth));
+        const friendMonthLabel = new Date(friendCalYear, friendCalMonth, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+
         return (
           <div onClick={closeFriendPerformance} style={{ position: "fixed", inset: 0, background: "rgba(20,20,35,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 60 }}>
             <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.card, borderRadius: 16, padding: 24, width: "100%", maxWidth: 760, maxHeight: "86vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(20,20,35,0.35)" }}>
@@ -3112,6 +3134,78 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                     <StatCard label="Avg duration" value={fmtDuration(avgDurationF)} />
                   </div>
                   <EquityChart points={equityCurveF} height={260} />
+
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "24px 0 12px" }}>
+                    <button
+                      onClick={() => { if (friendAtEarliestMonth) return; const m = friendCalMonth - 1; if (m < 0) { setFriendCalMonth(11); setFriendCalYear(friendCalYear - 1); } else setFriendCalMonth(m); }}
+                      disabled={friendAtEarliestMonth}
+                      style={{ ...ghostBtnStyle_(), opacity: friendAtEarliestMonth ? 0.4 : 1, cursor: friendAtEarliestMonth ? "not-allowed" : "pointer" }}
+                    >
+                      ← Prev
+                    </button>
+                    <div style={{ fontSize: 14, fontWeight: 700 }}>{friendMonthLabel}</div>
+                    <button
+                      onClick={() => { const m = friendCalMonth + 1; if (m > 11) { setFriendCalMonth(0); setFriendCalYear(friendCalYear + 1); } else setFriendCalMonth(m); }}
+                      style={ghostBtnStyle_()}
+                    >
+                      Next →
+                    </button>
+                  </div>
+
+                  <div style={{ overflowX: "auto" }}>
+                    <div style={{ minWidth: 560 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr) 90px", gap: 8, marginBottom: 8 }}>
+                        {WEEKDAY_LABELS.map((wd) => (
+                          <div key={wd} style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, textAlign: "center", padding: "4px 0" }}>{wd}</div>
+                        ))}
+                        <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, textAlign: "center", padding: "4px 0" }}>Total</div>
+                      </div>
+                      {friendCalendarWeeks.map((week, wi) => (
+                        <div key={wi} style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr) 90px", gap: 8, marginBottom: 8 }}>
+                          {week.cells.slice(1, 6).map((cell, ci) => {
+                            if (!cell) {
+                              return <div key={ci} style={{ background: COLORS.subtleBg, border: `1px solid ${COLORS.border}`, borderRadius: 10, minHeight: 58 }} />;
+                            }
+                            const d = cell.data;
+                            const hasTrades = !!(d && d.count > 0);
+                            const isWin = hasTrades && d.total >= 0;
+                            const cellColor = isWin ? COLORS.win : COLORS.loss;
+                            const cellSoft = isWin ? COLORS.win + "1E" : COLORS.loss + "1E";
+                            return (
+                              <div
+                                key={ci}
+                                style={{
+                                  borderRadius: 10, minHeight: 58, padding: "6px 8px",
+                                  background: hasTrades ? cellSoft : COLORS.subtleBg,
+                                  border: `1.5px solid ${hasTrades ? cellColor : COLORS.border}`,
+                                  display: "flex", flexDirection: "column", justifyContent: "space-between",
+                                }}
+                              >
+                                <div style={{ fontSize: 12, color: hasTrades ? cellColor : COLORS.textMuted, fontWeight: 600 }}>{cell.day}</div>
+                                {hasTrades && (
+                                  <div className="mono" style={{ fontSize: 12.5, fontWeight: 700, color: cellColor }}>{fmtMoney(d.total)}</div>
+                                )}
+                              </div>
+                            );
+                          })}
+                          <div
+                            style={{
+                              borderRadius: 10, minHeight: 58, padding: "6px 8px",
+                              background: week.tradeCount ? (week.total >= 0 ? COLORS.win + "1E" : COLORS.loss + "1E") : COLORS.subtleBg,
+                              border: `1.5px solid ${week.tradeCount ? (week.total >= 0 ? COLORS.win : COLORS.loss) : COLORS.border}`,
+                              display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center",
+                            }}
+                          >
+                            {week.tradeCount ? (
+                              <div className="mono" style={{ fontSize: 12, fontWeight: 700, color: week.total >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(week.total)}</div>
+                            ) : (
+                              <div style={{ fontSize: 11, color: COLORS.textMuted }}>—</div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </>
               )}
             </div>
