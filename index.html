@@ -871,7 +871,7 @@ function Paywall({ status, onLogout, onSubscribe, checkoutBusy, checkoutError })
   );
 }
 
-function TradeJournal({ session, onLogout }) {
+function TradeJournal({ session, onLogout, initialDisplayName }) {
   const userId = session.user.id;
   const [theme, setTheme] = useState(() => loadLocal(THEME_KEY, "light"));
   applyTheme(theme); // mutate the shared COLORS object before anything below reads it
@@ -932,6 +932,10 @@ function TradeJournal({ session, onLogout }) {
   const [friendTrades, setFriendTrades] = useState([]);
   const [friendTradesLoading, setFriendTradesLoading] = useState(false);
   const [friendTradesError, setFriendTradesError] = useState(null);
+  const [nickname, setNickname] = useState(initialDisplayName || "");
+  const [nicknameBusy, setNicknameBusy] = useState(false);
+  const [nicknameError, setNicknameError] = useState(null);
+  const [nicknameSavedMsg, setNicknameSavedMsg] = useState(false);
 
   // Confluences: atomic named tags (e.g. "IFVG"), picked in Add Trade. The
   // same confluence can be added more than once on one trade (different
@@ -1102,6 +1106,20 @@ function TradeJournal({ session, onLogout }) {
     setViewingFriend(null);
     setFriendTrades([]);
     setFriendTradesError(null);
+  }
+
+  async function saveNickname(e) {
+    e.preventDefault();
+    setNicknameError(null);
+    setNicknameSavedMsg(false);
+    const name = nickname.trim();
+    if (!name) { setNicknameError("Enter a nickname."); return; }
+    setNicknameBusy(true);
+    const { error } = await supabaseClient.from("profiles").update({ display_name: name }).eq("id", userId);
+    setNicknameBusy(false);
+    if (error) { setNicknameError("Couldn't save your nickname — try again."); return; }
+    setNickname(name);
+    setNicknameSavedMsg(true);
   }
 
   // ---- Confluences — atomic, user-named tags you can select onto trades ----
@@ -2597,6 +2615,28 @@ function TradeJournal({ session, onLogout }) {
           </>
         ) : tab === "friends" ? (
           <>
+            <form onSubmit={saveNickname} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+              <div style={{ fontSize: 13, color: COLORS.text, fontWeight: 700 }}>Your nickname</div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+                <Field label="Shown to friends instead of your email" style={{ flex: "1 1 220px" }}>
+                  <input type="text" value={nickname} onChange={(e) => { setNickname(e.target.value); setNicknameSavedMsg(false); }} placeholder="e.g. Jakub" style={inputStyle_()} />
+                </Field>
+                <button type="submit" disabled={nicknameBusy} style={{ ...primaryBtnStyle_(), opacity: nicknameBusy ? 0.7 : 1 }}>
+                  {nicknameBusy ? "Saving…" : "Save"}
+                </button>
+              </div>
+              {nicknameError && (
+                <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>
+                  {nicknameError}
+                </div>
+              )}
+              {nicknameSavedMsg && !nicknameError && (
+                <div style={{ background: COLORS.winSoft, border: `1px solid ${COLORS.win}33`, color: COLORS.win, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>
+                  Saved.
+                </div>
+              )}
+            </form>
+
             <form onSubmit={sendFriendRequest} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
               <div style={{ fontSize: 13, color: COLORS.text, fontWeight: 700 }}>Add a friend</div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
@@ -3207,7 +3247,7 @@ function App() {
     );
   }
 
-  return <TradeJournal session={session} onLogout={handleLogout} />;
+  return <TradeJournal session={session} onLogout={handleLogout} initialDisplayName={profile ? profile.display_name : ""} />;
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
