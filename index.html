@@ -23,8 +23,6 @@
     .sidebar nav { flex-direction: row !important; width: 100%; justify-content: space-around; }
     .main-content { margin-left: 0 !important; }
     .stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
-    .perf-top { flex-direction: column !important; }
-    .perf-targets { width: 100% !important; }
   }
 </style>
 </head>
@@ -256,6 +254,7 @@ function rowToTargets(row) {
       profitColor: "#16A34A", minBalanceColor: "#E23D45", growthColor: "",
       axisColor: "",
       calWinColor: "#16A34A", calLossColor: "#E23D45", calPayoutColor: "#0EA5E9",
+      selectedTabColor: "", addTradeColor: "", welcomeBannerColor: "",
     };
   }
   return {
@@ -269,6 +268,9 @@ function rowToTargets(row) {
     calWinColor: row.cal_win_color || "#16A34A",
     calLossColor: row.cal_loss_color || "#E23D45",
     calPayoutColor: row.cal_payout_color || "#0EA5E9",
+    selectedTabColor: row.selected_tab_color || "",
+    addTradeColor: row.add_trade_color || "",
+    welcomeBannerColor: row.welcome_banner_color || "",
   };
 }
 function targetsToRow(t, userId) {
@@ -284,6 +286,9 @@ function targetsToRow(t, userId) {
     cal_win_color: t.calWinColor || "#16A34A",
     cal_loss_color: t.calLossColor || "#E23D45",
     cal_payout_color: t.calPayoutColor || "#0EA5E9",
+    selected_tab_color: t.selectedTabColor || null,
+    add_trade_color: t.addTradeColor || null,
+    welcome_banner_color: t.welcomeBannerColor || null,
   };
 }
 function rowToMedia(row) {
@@ -1719,7 +1724,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           onClick={() => setTab("trades")}
           style={{
             display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-            background: COLORS.accent, color: "#fff", border: "none", borderRadius: 10,
+            background: targets.addTradeColor || COLORS.accent, color: "#fff", border: "none", borderRadius: 10,
             padding: "12px 14px", fontSize: 14, fontWeight: 700, cursor: "pointer",
             boxShadow: tab === "trades" ? "0 0 0 2px rgba(255,255,255,0.55), 0 2px 8px rgba(124,92,252,0.45)" : "0 2px 8px rgba(124,92,252,0.45)",
           }}
@@ -1735,7 +1740,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                 onClick={() => setTab(key)}
                 style={{
                   display: "flex", alignItems: "center", gap: 10,
-                  background: active ? COLORS.sidebarActive : "transparent",
+                  background: active ? (targets.selectedTabColor || COLORS.sidebarActive) : "transparent",
                   color: active ? "#fff" : "#9599B0",
                   border: "none", borderRadius: 10, padding: "10px 12px",
                   fontSize: 13.5, fontWeight: 600, cursor: "pointer", textAlign: "left",
@@ -1762,6 +1767,18 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           {theme === "light" ? "Dark mode" : "Light mode"}
         </button>
         <button
+          onClick={() => setTab("settings")}
+          style={{
+            display: "flex", alignItems: "center", gap: 8,
+            background: tab === "settings" ? (targets.selectedTabColor || COLORS.sidebarActive) : "rgba(255,255,255,0.06)",
+            color: tab === "settings" ? "#fff" : "#C7CAD6",
+            border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10,
+            padding: "9px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "left",
+          }}
+        >
+          <span style={{ fontSize: 14 }}>⚙️</span> Settings
+        </button>
+        <button
           onClick={onLogout}
           style={{
             display: "flex", alignItems: "center", gap: 8,
@@ -1779,10 +1796,10 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
         <header style={{ marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
           <div>
             <h1 style={{ fontSize: 24, margin: 0, fontWeight: 700, letterSpacing: "-0.01em" }}>
-              {tab === "dashboard" ? "Dashboard" : tab === "trades" ? "Trades" : tab === "calendar" ? "Performance" : tab === "patterns" ? "Patterns" : tab === "friends" ? "Friends" : "Journal"}
+              {tab === "dashboard" ? "Dashboard" : tab === "trades" ? "Trades" : tab === "calendar" ? "Performance" : tab === "patterns" ? "Patterns" : tab === "friends" ? "Friends" : tab === "settings" ? "Settings" : "Journal"}
             </h1>
             <div style={{ fontSize: 13, color: COLORS.textMuted, marginTop: 2 }}>
-              {tab === "dashboard" ? "Your performance and your friends'" : tab === "trades" ? "Log and review every trade" : tab === "calendar" ? "Account growth and daily/weekly P&L" : tab === "patterns" ? "How you perform by how you felt" : tab === "friends" ? "See each other's trades" : "Track how you felt and why"}
+              {tab === "dashboard" ? "Your performance and your friends'" : tab === "trades" ? "Log and review every trade" : tab === "calendar" ? "Account growth and daily/weekly P&L" : tab === "patterns" ? "How you perform by how you felt" : tab === "friends" ? "See each other's trades" : tab === "settings" ? "Targets and appearance" : "Track how you felt and why"}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
@@ -1803,7 +1820,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
         {tab === "dashboard" ? (
           <>
             <div style={{
-              background: `linear-gradient(135deg, ${COLORS.accent}, ${COLORS.sidebarActive})`,
+              background: targets.welcomeBannerColor || `linear-gradient(135deg, ${COLORS.accent}, ${COLORS.sidebarActive})`,
               borderRadius: 16, padding: "24px 28px", marginBottom: 24,
               boxShadow: "0 8px 24px rgba(124,92,252,0.35)",
               position: "relative", overflow: "hidden", textAlign: "center",
@@ -2170,168 +2187,10 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               <StatCard label="Avg duration" value={fmtDuration(avgDuration)} />
             </div>
 
-            {/* Targets (left) + Account size / equity (right) — top half of the page */}
-            <div className="perf-top" style={{ display: "flex", gap: 16, marginBottom: 28, alignItems: "stretch" }}>
-
-              {/* Targets panel */}
-              <div className="perf-targets" style={{ width: 240, flexShrink: 0, background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 18, boxShadow: "0 1px 2px rgba(23,21,51,0.04)", display: "flex", flexDirection: "column", gap: 16 }}>
-                <div style={{ fontSize: 13, fontWeight: 700 }}>Targets</div>
-
-                {/* Profit target */}
-                <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                    <label style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600 }}>Profit target</label>
-                    {profitTargetHit && <span style={{ fontSize: 11, color: COLORS.win, fontWeight: 700 }}>Hit! 🎯</span>}
-                  </div>
-                  <input
-                    type="number" step="0.01" min="0"
-                    value={targets.profitTarget}
-                    onChange={(e) => updateTargets({ profitTarget: e.target.value })}
-                    placeholder="$0.00"
-                    className="mono"
-                    style={{ ...inputStyle_() }}
-                  />
-                </div>
-
-                {/* Max loss */}
-                <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                    <label style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600 }}>Max loss</label>
-                    {maxLossHit && <span style={{ fontSize: 11, color: COLORS.loss, fontWeight: 700 }}>Hit! ⛔</span>}
-                  </div>
-                  <input
-                    type="number" step="0.01" min="0"
-                    value={targets.maxLoss}
-                    onChange={(e) => updateTargets({ maxLoss: e.target.value })}
-                    placeholder="$0.00"
-                    className="mono"
-                    style={{ ...inputStyle_() }}
-                  />
-                </div>
-
-                {/* Axis */}
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Axis</div>
-                  <label style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600, display: "block", marginBottom: 6 }}>$ spacing</label>
-                  <input
-                    type="number" step="1" min="0"
-                    value={targets.axisStep || ""}
-                    onChange={(e) => updateTargets({ axisStep: e.target.value })}
-                    placeholder="Auto"
-                    className="mono"
-                    style={{ ...inputStyle_(), marginBottom: 10 }}
-                  />
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <span style={{ fontSize: 12, color: COLORS.textMuted }}>Color</span>
-                    <input
-                      type="color"
-                      value={targets.axisColor || "#8B8FA3"}
-                      onChange={(e) => updateTargets({ axisColor: e.target.value })}
-                      style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
-                    />
-                  </div>
-                  {(targets.axisStep || targets.axisColor) && (
-                    <button
-                      type="button"
-                      onClick={() => updateTargets({ axisStep: "", axisColor: "" })}
-                      style={{ ...ghostBtnStyle_(), fontSize: 11, padding: "4px 10px", width: "100%", marginTop: 10 }}
-                    >
-                      Reset axis
-                    </button>
-                  )}
-                </div>
-
-                {/* Colors */}
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Colors</div>
-                  <div style={{ display: "grid", gap: 8 }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                      <span style={{ fontSize: 12, color: COLORS.textMuted }}>Growth curve</span>
-                      <input
-                        type="color"
-                        value={targets.growthColor || "#7C5CFC"}
-                        onChange={(e) => updateTargets({ growthColor: e.target.value })}
-                        style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
-                      />
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                      <span style={{ fontSize: 12, color: COLORS.textMuted }}>Profit target</span>
-                      <input
-                        type="color"
-                        value={targets.profitColor || "#16A34A"}
-                        onChange={(e) => updateTargets({ profitColor: e.target.value })}
-                        style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
-                      />
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                      <span style={{ fontSize: 12, color: COLORS.textMuted }}>Minimum balance</span>
-                      <input
-                        type="color"
-                        value={targets.minBalanceColor || "#E23D45"}
-                        onChange={(e) => updateTargets({ minBalanceColor: e.target.value })}
-                        style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
-                      />
-                    </div>
-                    {(targets.growthColor || targets.profitColor !== "#16A34A" || targets.minBalanceColor !== "#E23D45") && (
-                      <button
-                        type="button"
-                        onClick={() => updateTargets({ growthColor: "", profitColor: "#16A34A", minBalanceColor: "#E23D45" })}
-                        style={{ ...ghostBtnStyle_(), fontSize: 11, padding: "4px 10px" }}
-                      >
-                        Reset colors
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Calendar */}
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Calendar</div>
-                  <div style={{ display: "grid", gap: 8 }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                      <span style={{ fontSize: 12, color: COLORS.textMuted }}>Winning days</span>
-                      <input
-                        type="color"
-                        value={targets.calWinColor || "#16A34A"}
-                        onChange={(e) => updateTargets({ calWinColor: e.target.value })}
-                        style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
-                      />
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                      <span style={{ fontSize: 12, color: COLORS.textMuted }}>Losing days</span>
-                      <input
-                        type="color"
-                        value={targets.calLossColor || "#E23D45"}
-                        onChange={(e) => updateTargets({ calLossColor: e.target.value })}
-                        style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
-                      />
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                      <span style={{ fontSize: 12, color: COLORS.textMuted }}>Payouts</span>
-                      <input
-                        type="color"
-                        value={targets.calPayoutColor || "#0EA5E9"}
-                        onChange={(e) => updateTargets({ calPayoutColor: e.target.value })}
-                        style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
-                      />
-                    </div>
-                    {(targets.calWinColor !== "#16A34A" || targets.calLossColor !== "#E23D45" || targets.calPayoutColor !== "#0EA5E9") && (
-                      <button
-                        type="button"
-                        onClick={() => updateTargets({ calWinColor: "#16A34A", calLossColor: "#E23D45", calPayoutColor: "#0EA5E9" })}
-                        style={{ ...ghostBtnStyle_(), fontSize: 11, padding: "4px 10px" }}
-                      >
-                        Reset calendar
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-
+            <div className="perf-top" style={{ marginBottom: 28 }}>
               {/* Account size / equity */}
               <div
                 style={{
-                  flex: 1,
                   background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16,
                   padding: 22, boxShadow: "0 1px 2px rgba(23,21,51,0.04)",
                   minHeight: "calc(50vh - 100px)", display: "flex", flexDirection: "column", justifyContent: "space-between",
@@ -2734,6 +2593,201 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                 )}
               </>
             )}
+          </>
+        ) : tab === "settings" ? (
+          <>
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Appearance</div>
+            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 18, boxShadow: "0 1px 2px rgba(23,21,51,0.04)", maxWidth: 420, marginBottom: 28, display: "grid", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 13, color: COLORS.textMuted }}>Selected tab</span>
+                <input
+                  type="color"
+                  value={targets.selectedTabColor || COLORS.sidebarActive}
+                  onChange={(e) => updateTargets({ selectedTabColor: e.target.value })}
+                  style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
+                />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 13, color: COLORS.textMuted }}>Add Trade button</span>
+                <input
+                  type="color"
+                  value={targets.addTradeColor || COLORS.accent}
+                  onChange={(e) => updateTargets({ addTradeColor: e.target.value })}
+                  style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
+                />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 13, color: COLORS.textMuted }}>Welcome banner</span>
+                <input
+                  type="color"
+                  value={targets.welcomeBannerColor || COLORS.accent}
+                  onChange={(e) => updateTargets({ welcomeBannerColor: e.target.value })}
+                  style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
+                />
+              </div>
+              {(targets.selectedTabColor || targets.addTradeColor || targets.welcomeBannerColor) && (
+                <button
+                  type="button"
+                  onClick={() => updateTargets({ selectedTabColor: "", addTradeColor: "", welcomeBannerColor: "" })}
+                  style={{ ...ghostBtnStyle_(), fontSize: 11, padding: "4px 10px" }}
+                >
+                  Reset appearance colors
+                </button>
+              )}
+            </div>
+
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Targets</div>
+            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 18, boxShadow: "0 1px 2px rgba(23,21,51,0.04)", maxWidth: 420, display: "flex", flexDirection: "column", gap: 16 }}>
+              {/* Profit target */}
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                  <label style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600 }}>Profit target</label>
+                  {profitTargetHit && <span style={{ fontSize: 11, color: COLORS.win, fontWeight: 700 }}>Hit! 🎯</span>}
+                </div>
+                <input
+                  type="number" step="0.01" min="0"
+                  value={targets.profitTarget}
+                  onChange={(e) => updateTargets({ profitTarget: e.target.value })}
+                  placeholder="$0.00"
+                  className="mono"
+                  style={{ ...inputStyle_() }}
+                />
+              </div>
+
+              {/* Max loss */}
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                  <label style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600 }}>Max loss</label>
+                  {maxLossHit && <span style={{ fontSize: 11, color: COLORS.loss, fontWeight: 700 }}>Hit! ⛔</span>}
+                </div>
+                <input
+                  type="number" step="0.01" min="0"
+                  value={targets.maxLoss}
+                  onChange={(e) => updateTargets({ maxLoss: e.target.value })}
+                  placeholder="$0.00"
+                  className="mono"
+                  style={{ ...inputStyle_() }}
+                />
+              </div>
+
+              {/* Axis */}
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Axis</div>
+                <label style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600, display: "block", marginBottom: 6 }}>$ spacing</label>
+                <input
+                  type="number" step="1" min="0"
+                  value={targets.axisStep || ""}
+                  onChange={(e) => updateTargets({ axisStep: e.target.value })}
+                  placeholder="Auto"
+                  className="mono"
+                  style={{ ...inputStyle_(), marginBottom: 10 }}
+                />
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: 12, color: COLORS.textMuted }}>Color</span>
+                  <input
+                    type="color"
+                    value={targets.axisColor || "#8B8FA3"}
+                    onChange={(e) => updateTargets({ axisColor: e.target.value })}
+                    style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
+                  />
+                </div>
+                {(targets.axisStep || targets.axisColor) && (
+                  <button
+                    type="button"
+                    onClick={() => updateTargets({ axisStep: "", axisColor: "" })}
+                    style={{ ...ghostBtnStyle_(), fontSize: 11, padding: "4px 10px", width: "100%", marginTop: 10 }}
+                  >
+                    Reset axis
+                  </button>
+                )}
+              </div>
+
+              {/* Colors */}
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Colors</div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 12, color: COLORS.textMuted }}>Growth curve</span>
+                    <input
+                      type="color"
+                      value={targets.growthColor || "#7C5CFC"}
+                      onChange={(e) => updateTargets({ growthColor: e.target.value })}
+                      style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
+                    />
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 12, color: COLORS.textMuted }}>Profit target</span>
+                    <input
+                      type="color"
+                      value={targets.profitColor || "#16A34A"}
+                      onChange={(e) => updateTargets({ profitColor: e.target.value })}
+                      style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
+                    />
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 12, color: COLORS.textMuted }}>Minimum balance</span>
+                    <input
+                      type="color"
+                      value={targets.minBalanceColor || "#E23D45"}
+                      onChange={(e) => updateTargets({ minBalanceColor: e.target.value })}
+                      style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
+                    />
+                  </div>
+                  {(targets.growthColor || targets.profitColor !== "#16A34A" || targets.minBalanceColor !== "#E23D45") && (
+                    <button
+                      type="button"
+                      onClick={() => updateTargets({ growthColor: "", profitColor: "#16A34A", minBalanceColor: "#E23D45" })}
+                      style={{ ...ghostBtnStyle_(), fontSize: 11, padding: "4px 10px" }}
+                    >
+                      Reset colors
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Calendar */}
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Calendar</div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 12, color: COLORS.textMuted }}>Winning days</span>
+                    <input
+                      type="color"
+                      value={targets.calWinColor || "#16A34A"}
+                      onChange={(e) => updateTargets({ calWinColor: e.target.value })}
+                      style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
+                    />
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 12, color: COLORS.textMuted }}>Losing days</span>
+                    <input
+                      type="color"
+                      value={targets.calLossColor || "#E23D45"}
+                      onChange={(e) => updateTargets({ calLossColor: e.target.value })}
+                      style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
+                    />
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 12, color: COLORS.textMuted }}>Payouts</span>
+                    <input
+                      type="color"
+                      value={targets.calPayoutColor || "#0EA5E9"}
+                      onChange={(e) => updateTargets({ calPayoutColor: e.target.value })}
+                      style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
+                    />
+                  </div>
+                  {(targets.calWinColor !== "#16A34A" || targets.calLossColor !== "#E23D45" || targets.calPayoutColor !== "#0EA5E9") && (
+                    <button
+                      type="button"
+                      onClick={() => updateTargets({ calWinColor: "#16A34A", calLossColor: "#E23D45", calPayoutColor: "#0EA5E9" })}
+                      style={{ ...ghostBtnStyle_(), fontSize: 11, padding: "4px 10px" }}
+                    >
+                      Reset calendar
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
           </>
         ) : (
           <>

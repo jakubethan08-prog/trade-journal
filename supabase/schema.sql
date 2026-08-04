@@ -140,6 +140,12 @@ create table if not exists public.targets (
   cal_payout_color text not null default '#0EA5E9'
 );
 
+-- App-wide appearance overrides (Settings tab), added after the initial
+-- targets table — nullable, empty means "use the theme default".
+alter table public.targets add column if not exists selected_tab_color text;
+alter table public.targets add column if not exists add_trade_color text;
+alter table public.targets add column if not exists welcome_banner_color text;
+
 alter table public.targets enable row level security;
 
 drop policy if exists "select own targets" on public.targets;
