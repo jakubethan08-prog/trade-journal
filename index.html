@@ -1163,6 +1163,40 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const [friendCalYear, setFriendCalYear] = useState(() => new Date().getFullYear());
   const [targetsPopped, setTargetsPopped] = useState(false);
 
+  // ---- Groups: list (lightweight, for the Friends tab) ----
+  const [groupsList, setGroupsList] = useState([]);
+  const [groupsLoading, setGroupsLoading] = useState(true);
+  const [newGroupName, setNewGroupName] = useState("");
+  const [newGroupMemberIds, setNewGroupMemberIds] = useState([]);
+  const [groupFormError, setGroupFormError] = useState(null);
+  const [groupFormBusy, setGroupFormBusy] = useState(false);
+
+  // ---- Groups: the currently open group modal ----
+  const [openGroup, setOpenGroup] = useState(null); // { id, name }
+  const [groupView, setGroupView] = useState("chat"); // 'chat' | 'settings'
+  const [groupDataLoading, setGroupDataLoading] = useState(false);
+  const [groupDataError, setGroupDataError] = useState(null);
+  const [groupMembers, setGroupMembers] = useState([]);
+  const [groupMessages, setGroupMessages] = useState([]);
+  const [groupMessageDraft, setGroupMessageDraft] = useState("");
+  const [groupMessageSending, setGroupMessageSending] = useState(false);
+  const [groupConfluences, setGroupConfluences] = useState([]);
+  const [groupTargetTags, setGroupTargetTags] = useState([]);
+  const [groupTradeConfluenceLinks, setGroupTradeConfluenceLinks] = useState([]);
+  const [groupTradeTargetTagLinks, setGroupTradeTargetTagLinks] = useState([]);
+  const [groupPatterns, setGroupPatterns] = useState([]);
+  const [groupPatternConfluenceLinks, setGroupPatternConfluenceLinks] = useState([]);
+  const [newGroupConfluenceName, setNewGroupConfluenceName] = useState("");
+  const [newGroupTargetTagName, setNewGroupTargetTagName] = useState("");
+  const [groupNameDraft, setGroupNameDraft] = useState("");
+  const [groupSettingsError, setGroupSettingsError] = useState(null);
+  // "Tag a trade" mini-form (inside the group's Chat view)
+  const [tagTradeId, setTagTradeId] = useState("");
+  const [tagConfluenceIds, setTagConfluenceIds] = useState([]);
+  const [tagTargetTagIds, setTagTargetTagIds] = useState([]);
+  const [tagError, setTagError] = useState(null);
+  const [groupTaggedTrades, setGroupTaggedTrades] = useState({}); // trade_id -> { pnl, entryType }
+
   // Confluences: atomic named tags (e.g. "IFVG"), picked in Add Trade. The
   // same confluence can be added more than once on one trade (different
   // timeframes), so selections are a list of entries, not a set of ids.
@@ -1348,6 +1382,310 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     if (error) { setNicknameError("Couldn't save your nickname — try again."); return; }
     setNickname(name);
     setNicknameSavedMsg(true);
+  }
+
+  // ---- Groups: list (for the Friends tab) ----
+  async function loadGroups() {
+    setGroupsLoading(true);
+    try {
+      const { data: memberships, error: mErr } = await supabaseClient.from("group_members").select("group_id");
+      if (mErr) throw mErr;
+      const groupIds = Array.from(new Set((memberships || []).map((m) => m.group_id)));
+      if (!groupIds.length) { setGroupsList([]); setGroupsLoading(false); return; }
+      const [groupsRes, allMembersRes] = await Promise.all([
+        supabaseClient.from("groups").select("*").in("id", groupIds),
+        supabaseClient.from("group_members").select("group_id, user_id").in("group_id", groupIds),
+      ]);
+      if (groupsRes.error) throw groupsRes.error;
+      if (allMembersRes.error) throw allMembersRes.error;
+      const memberIdsByGroup = {};
+      (allMembersRes.data || []).forEach((m) => {
+        if (!memberIdsByGroup[m.group_id]) memberIdsByGroup[m.group_id] = [];
+        memberIdsByGroup[m.group_id].push(m.user_id);
+      });
+      const allUserIds = Array.from(new Set((allMembersRes.data || []).map((m) => m.user_id)));
+      let profilesById = {};
+      if (allUserIds.length) {
+        const { data: profs, error: pErr } = await supabaseClient.from("profiles").select("id, email, display_name").in("id", allUserIds);
+        if (pErr) throw pErr;
+        profilesById = Object.fromEntries((profs || []).map((p) => [p.id, p]));
+      }
+      const enriched = (groupsRes.data || []).map((g) => ({
+        ...g,
+        memberIds: memberIdsByGroup[g.id] || [],
+        memberProfiles: (memberIdsByGroup[g.id] || []).map((uid) => profilesById[uid]).filter(Boolean),
+      })).sort((a, b) => a.name.localeCompare(b.name));
+      setGroupsList(enriched);
+    } catch (e) {
+      setGroupFormError("Couldn't load groups.");
+    } finally {
+      setGroupsLoading(false);
+    }
+  }
+
+  useEffect(() => { loadGroups(); }, [userId]);
+
+  function toggleNewGroupMember(id) {
+    setNewGroupMemberIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  async function createGroup(e) {
+    e.preventDefault();
+    setGroupFormError(null);
+    const name = newGroupName.trim();
+    if (!name) { setGroupFormError("Enter a group name."); return; }
+    setGroupFormBusy(true);
+    try {
+      const { error } = await supabaseClient.rpc("create_group", { p_name: name, p_member_ids: newGroupMemberIds });
+      if (error) throw error;
+      setNewGroupName("");
+      setNewGroupMemberIds([]);
+      await loadGroups();
+    } catch (err) {
+      setGroupFormError(err.message || "Couldn't create that group.");
+    } finally {
+      setGroupFormBusy(false);
+    }
+  }
+
+  // ---- Groups: the currently open group ----
+  function closeGroupModal() {
+    setOpenGroup(null);
+    setGroupView("chat");
+    setGroupMembers([]);
+    setGroupMessages([]);
+    setGroupMessageDraft("");
+    setGroupConfluences([]);
+    setGroupTargetTags([]);
+    setGroupTradeConfluenceLinks([]);
+    setGroupTradeTargetTagLinks([]);
+    setGroupPatterns([]);
+    setGroupPatternConfluenceLinks([]);
+    setGroupTaggedTrades({});
+    setGroupDataError(null);
+    setGroupSettingsError(null);
+    setTagTradeId(""); setTagConfluenceIds([]); setTagTargetTagIds([]); setTagError(null);
+  }
+
+  async function openGroupModal(group) {
+    setOpenGroup({ id: group.id, name: group.name });
+    setGroupView("chat");
+    setGroupNameDraft(group.name);
+    setGroupSettingsError(null);
+    setGroupDataLoading(true);
+    setGroupDataError(null);
+    try {
+      const [membersRes, messagesRes, confluencesRes, targetTagsRes, tradeConfluencesRes, tradeTargetTagsRes, patternsRes, patternConfluencesRes] = await Promise.all([
+        supabaseClient.from("group_members").select("user_id").eq("group_id", group.id),
+        supabaseClient.from("group_messages").select("*").eq("group_id", group.id).order("created_at", { ascending: true }),
+        supabaseClient.from("group_confluences").select("*").eq("group_id", group.id).order("name", { ascending: true }),
+        supabaseClient.from("group_target_tags").select("*").eq("group_id", group.id).order("name", { ascending: true }),
+        supabaseClient.from("group_trade_confluences").select("*").eq("group_id", group.id),
+        supabaseClient.from("group_trade_target_tags").select("*").eq("group_id", group.id),
+        supabaseClient.from("group_patterns").select("*").eq("group_id", group.id),
+        supabaseClient.from("group_pattern_confluences").select("*").eq("group_id", group.id),
+      ]);
+      if (membersRes.error) throw membersRes.error;
+      if (messagesRes.error) throw messagesRes.error;
+      if (confluencesRes.error) throw confluencesRes.error;
+      if (targetTagsRes.error) throw targetTagsRes.error;
+      if (tradeConfluencesRes.error) throw tradeConfluencesRes.error;
+      if (tradeTargetTagsRes.error) throw tradeTargetTagsRes.error;
+      if (patternsRes.error) throw patternsRes.error;
+      if (patternConfluencesRes.error) throw patternConfluencesRes.error;
+
+      const memberIds = (membersRes.data || []).map((m) => m.user_id);
+      let profilesById = {};
+      if (memberIds.length) {
+        const { data: profs, error: pErr } = await supabaseClient.from("profiles").select("id, email, display_name").in("id", memberIds);
+        if (pErr) throw pErr;
+        profilesById = Object.fromEntries((profs || []).map((p) => [p.id, p]));
+      }
+
+      const distinctTradeIds = Array.from(new Set((tradeConfluencesRes.data || []).map((l) => l.trade_id)));
+      let taggedTradesById = {};
+      if (distinctTradeIds.length) {
+        const { data: tradesData, error: tErr } = await supabaseClient.from("trades").select("id, pnl, entry_type").in("id", distinctTradeIds);
+        if (tErr) throw tErr;
+        taggedTradesById = Object.fromEntries((tradesData || []).map((t) => [t.id, { pnl: Number(t.pnl), entryType: t.entry_type }]));
+      }
+
+      setGroupMembers(memberIds.map((id) => ({ id, profile: profilesById[id] || null })));
+      setGroupMessages(messagesRes.data || []);
+      setGroupConfluences(confluencesRes.data || []);
+      setGroupTargetTags(targetTagsRes.data || []);
+      setGroupTradeConfluenceLinks(tradeConfluencesRes.data || []);
+      setGroupTradeTargetTagLinks(tradeTargetTagsRes.data || []);
+      setGroupPatterns(patternsRes.data || []);
+      setGroupPatternConfluenceLinks(patternConfluencesRes.data || []);
+      setGroupTaggedTrades(taggedTradesById);
+    } catch (e) {
+      setGroupDataError("Couldn't load this group.");
+    } finally {
+      setGroupDataLoading(false);
+    }
+  }
+
+  // Live message delivery — Realtime respects the same RLS policy as a normal select.
+  useEffect(() => {
+    if (!openGroup) return;
+    const channel = supabaseClient
+      .channel(`group-messages-${openGroup.id}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "group_messages", filter: `group_id=eq.${openGroup.id}` }, (payload) => {
+        setGroupMessages((prev) => (prev.some((m) => m.id === payload.new.id) ? prev : [...prev, payload.new]));
+      })
+      .subscribe();
+    return () => { supabaseClient.removeChannel(channel); };
+  }, [openGroup && openGroup.id]);
+
+  async function sendGroupMessage(e) {
+    e.preventDefault();
+    const body = groupMessageDraft.trim();
+    if (!body || !openGroup) return;
+    setGroupMessageSending(true);
+    const { data, error } = await supabaseClient.from("group_messages").insert({ group_id: openGroup.id, user_id: userId, body }).select().single();
+    setGroupMessageSending(false);
+    if (error) { setGroupDataError("Couldn't send that message."); return; }
+    setGroupMessageDraft("");
+    setGroupMessages((prev) => (prev.some((m) => m.id === data.id) ? prev : [...prev, data]));
+  }
+
+  async function addGroupConfluence(e) {
+    e.preventDefault();
+    setGroupSettingsError(null);
+    const name = newGroupConfluenceName.trim();
+    if (!name || !openGroup) { setGroupSettingsError("Enter a confluence name."); return; }
+    const { data, error } = await supabaseClient.from("group_confluences").insert({ group_id: openGroup.id, name }).select().single();
+    if (error) {
+      setGroupSettingsError(error.code === "23505" ? "This group already has a confluence with that name." : "Couldn't save that confluence.");
+      return;
+    }
+    setGroupConfluences([...groupConfluences, data].sort((a, b) => a.name.localeCompare(b.name)));
+    setNewGroupConfluenceName("");
+  }
+
+  async function deleteGroupConfluence(id) {
+    const { error } = await supabaseClient.from("group_confluences").delete().eq("id", id);
+    if (error) { setGroupSettingsError("Couldn't delete that confluence."); return; }
+    setGroupConfluences(groupConfluences.filter((c) => c.id !== id));
+    setGroupTradeConfluenceLinks(groupTradeConfluenceLinks.filter((l) => l.group_confluence_id !== id));
+    setGroupPatternConfluenceLinks(groupPatternConfluenceLinks.filter((l) => l.group_confluence_id !== id));
+    setTagConfluenceIds(tagConfluenceIds.filter((cid) => cid !== id));
+  }
+
+  async function addGroupTargetTag(e) {
+    e.preventDefault();
+    setGroupSettingsError(null);
+    const name = newGroupTargetTagName.trim();
+    if (!name || !openGroup) { setGroupSettingsError("Enter a target name."); return; }
+    const { data, error } = await supabaseClient.from("group_target_tags").insert({ group_id: openGroup.id, name }).select().single();
+    if (error) {
+      setGroupSettingsError(error.code === "23505" ? "This group already has a target with that name." : "Couldn't save that target.");
+      return;
+    }
+    setGroupTargetTags([...groupTargetTags, data].sort((a, b) => a.name.localeCompare(b.name)));
+    setNewGroupTargetTagName("");
+  }
+
+  async function deleteGroupTargetTag(id) {
+    const { error } = await supabaseClient.from("group_target_tags").delete().eq("id", id);
+    if (error) { setGroupSettingsError("Couldn't delete that target."); return; }
+    setGroupTargetTags(groupTargetTags.filter((t) => t.id !== id));
+    setGroupTradeTargetTagLinks(groupTradeTargetTagLinks.filter((l) => l.group_target_tag_id !== id));
+    setTagTargetTagIds(tagTargetTagIds.filter((tid) => tid !== id));
+  }
+
+  async function saveGroupName(e) {
+    e.preventDefault();
+    setGroupSettingsError(null);
+    const name = groupNameDraft.trim();
+    if (!name || !openGroup) { setGroupSettingsError("Enter a group name."); return; }
+    const { error } = await supabaseClient.from("groups").update({ name }).eq("id", openGroup.id);
+    if (error) { setGroupSettingsError("Couldn't rename the group."); return; }
+    setOpenGroup({ ...openGroup, name });
+    setGroupsList(groupsList.map((g) => (g.id === openGroup.id ? { ...g, name } : g)));
+  }
+
+  function toggleTagConfluence(id) {
+    setTagConfluenceIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+  function toggleTagTargetTag(id) {
+    setTagTargetTagIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  function findMatchingGroupPatternId(sortedConfluenceIds) {
+    const byPattern = {};
+    groupPatternConfluenceLinks.forEach((l) => {
+      if (!byPattern[l.group_pattern_id]) byPattern[l.group_pattern_id] = [];
+      byPattern[l.group_pattern_id].push(l.group_confluence_id);
+    });
+    for (const [patternId, ids] of Object.entries(byPattern)) {
+      const sorted = [...ids].sort();
+      if (sorted.length === sortedConfluenceIds.length && sorted.every((v, i) => v === sortedConfluenceIds[i])) {
+        return patternId;
+      }
+    }
+    return null;
+  }
+
+  async function ensureGroupPatternForConfluences(confluenceIds) {
+    if (!confluenceIds.length || !openGroup) return;
+    const sorted = [...confluenceIds].sort();
+    if (findMatchingGroupPatternId(sorted)) return;
+    const { data: newPattern, error } = await supabaseClient.from("group_patterns").insert({ group_id: openGroup.id }).select().single();
+    if (error) return;
+    const pcRows = sorted.map((groupConfluenceId) => ({ group_pattern_id: newPattern.id, group_confluence_id: groupConfluenceId, group_id: openGroup.id }));
+    const { error: pcError } = await supabaseClient.from("group_pattern_confluences").insert(pcRows);
+    if (pcError) return;
+    setGroupPatterns((prev) => [...prev, newPattern]);
+    setGroupPatternConfluenceLinks((prev) => [...prev, ...pcRows]);
+  }
+
+  async function updateGroupPatternGrade(patternId, grade) {
+    const { error } = await supabaseClient.from("group_patterns").update({ grade: grade || null }).eq("id", patternId);
+    if (error) { setGroupSettingsError("Couldn't update that pattern's grade."); return; }
+    setGroupPatterns(groupPatterns.map((p) => (p.id === patternId ? { ...p, grade: grade || null } : p)));
+  }
+
+  async function deleteGroupPatternRow(id) {
+    const { error } = await supabaseClient.from("group_patterns").delete().eq("id", id);
+    if (error) { setGroupSettingsError("Couldn't delete that pattern."); return; }
+    setGroupPatterns(groupPatterns.filter((p) => p.id !== id));
+    setGroupPatternConfluenceLinks(groupPatternConfluenceLinks.filter((l) => l.group_pattern_id !== id));
+  }
+
+  async function tagTradeIntoGroup(e) {
+    e.preventDefault();
+    setTagError(null);
+    if (!tagTradeId) { setTagError("Pick one of your trades."); return; }
+    if (!tagConfluenceIds.length) { setTagError("Select at least one confluence."); return; }
+    if (!openGroup) return;
+    try {
+      const linkRows = tagConfluenceIds.map((confluenceId) => ({
+        group_id: openGroup.id, trade_id: tagTradeId, group_confluence_id: confluenceId, user_id: userId,
+      }));
+      const { data: insertedLinks, error: linkErr } = await supabaseClient.from("group_trade_confluences").insert(linkRows).select();
+      if (linkErr) throw linkErr;
+      setGroupTradeConfluenceLinks([...groupTradeConfluenceLinks, ...insertedLinks]);
+
+      if (tagTargetTagIds.length) {
+        const targetLinkRows = tagTargetTagIds.map((tagId) => ({
+          group_id: openGroup.id, trade_id: tagTradeId, group_target_tag_id: tagId, user_id: userId,
+        }));
+        const { data: insertedTargetLinks, error: targetLinkErr } = await supabaseClient.from("group_trade_target_tags").insert(targetLinkRows).select();
+        if (!targetLinkErr) setGroupTradeTargetTagLinks([...groupTradeTargetTagLinks, ...insertedTargetLinks]);
+      }
+
+      const taggedTrade = trades.find((t) => t.id === tagTradeId);
+      if (taggedTrade) {
+        setGroupTaggedTrades((prev) => ({ ...prev, [tagTradeId]: { pnl: taggedTrade.pnl, entryType: taggedTrade.entryType } }));
+      }
+
+      await ensureGroupPatternForConfluences(tagConfluenceIds);
+      setTagTradeId(""); setTagConfluenceIds([]); setTagTargetTagIds([]);
+    } catch (err) {
+      setTagError("Couldn't tag that trade — try again.");
+    }
   }
 
   // ---- Confluences — atomic, user-named tags you can select onto trades ----
@@ -2812,6 +3150,67 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                 )}
               </>
             )}
+
+            <div style={{ fontSize: 13, fontWeight: 700, marginTop: 28, marginBottom: 12 }}>Groups</div>
+            <form onSubmit={createGroup} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 16, display: "grid", gap: 12, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+              <Field label="Group name">
+                <input type="text" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} placeholder="e.g. ICT Crew" style={inputStyle_()} />
+              </Field>
+              {acceptedFriends.length > 0 && (
+                <Field label="Add friends">
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {acceptedFriends.map((f) => {
+                      const label = (f.otherProfile && (f.otherProfile.display_name || f.otherProfile.email)) || "Unknown";
+                      const active = newGroupMemberIds.includes(f.otherId);
+                      return (
+                        <button
+                          type="button" key={f.id} onClick={() => toggleNewGroupMember(f.otherId)}
+                          style={{
+                            background: active ? COLORS.accentSoft : COLORS.subtleBg,
+                            border: `1.5px solid ${active ? COLORS.accent : COLORS.border}`,
+                            color: active ? COLORS.accent : COLORS.textMuted,
+                            padding: "6px 14px", borderRadius: 20, fontSize: 12.5, fontWeight: 600, cursor: "pointer",
+                          }}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </Field>
+              )}
+              <button type="submit" disabled={groupFormBusy} style={{ ...primaryBtnStyle_(), opacity: groupFormBusy ? 0.7 : 1 }}>
+                {groupFormBusy ? "Creating…" : "Create group"}
+              </button>
+              {groupFormError && (
+                <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>
+                  {groupFormError}
+                </div>
+              )}
+            </form>
+
+            {groupsLoading ? (
+              <EmptyState text="Loading…" />
+            ) : groupsList.length === 0 ? (
+              <EmptyState text="No groups yet. Create one above with some of your friends." />
+            ) : (
+              <div style={{ display: "grid", gap: 10 }}>
+                {groupsList.map((g) => (
+                  <button
+                    key={g.id}
+                    onClick={() => openGroupModal(g)}
+                    style={{
+                      background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16,
+                      display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+                      boxShadow: "0 1px 2px rgba(23,21,51,0.04)", cursor: "pointer", textAlign: "left", width: "100%",
+                    }}
+                  >
+                    <span style={{ fontSize: 14, fontWeight: 700, color: COLORS.text }}>{g.name}</span>
+                    <span style={{ fontSize: 12, color: COLORS.textMuted }}>{g.memberIds.length} member{g.memberIds.length === 1 ? "" : "s"}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </>
         ) : tab === "settings" ? (
           <>
@@ -3369,6 +3768,224 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           <TargetsPanel targets={targets} updateTargets={updateTargets} profitTargetHit={profitTargetHit} maxLossHit={maxLossHit} />
         </FloatingTargetsWindow>
       )}
+
+      {openGroup && (() => {
+        const groupConfluenceNameById = Object.fromEntries(groupConfluences.map((c) => [c.id, c.name]));
+        const groupTradeConfluenceMap = {};
+        groupTradeConfluenceLinks.forEach((l) => {
+          if (!groupTradeConfluenceMap[l.trade_id]) groupTradeConfluenceMap[l.trade_id] = [];
+          groupTradeConfluenceMap[l.trade_id].push(l.group_confluence_id);
+        });
+        Object.keys(groupTradeConfluenceMap).forEach((k) => {
+          groupTradeConfluenceMap[k] = Array.from(new Set(groupTradeConfluenceMap[k])).sort();
+        });
+        const groupPatternConfluenceMap = {};
+        groupPatternConfluenceLinks.forEach((l) => {
+          if (!groupPatternConfluenceMap[l.group_pattern_id]) groupPatternConfluenceMap[l.group_pattern_id] = [];
+          groupPatternConfluenceMap[l.group_pattern_id].push(l.group_confluence_id);
+        });
+        Object.keys(groupPatternConfluenceMap).forEach((k) => groupPatternConfluenceMap[k].sort());
+        const groupPatternPerf = groupPatterns.map((p) => {
+          const confIds = groupPatternConfluenceMap[p.id] || [];
+          const label = confIds.length ? confIds.map((id) => groupConfluenceNameById[id] || "?").join(" + ") : "—";
+          const taggedTradeIds = Object.keys(groupTradeConfluenceMap).filter((tid) => {
+            const arr = groupTradeConfluenceMap[tid];
+            return arr.length === confIds.length && arr.every((v, i) => v === confIds[i]);
+          });
+          const taggedTrades = taggedTradeIds.map((tid) => groupTaggedTrades[tid]).filter(Boolean).filter((t) => t.entryType !== "payout");
+          const count = taggedTrades.length;
+          const total = taggedTrades.reduce((s, t) => s + t.pnl, 0);
+          const wins = taggedTrades.filter((t) => t.pnl > 0).length;
+          const winRateP = count ? Math.round((wins / count) * 100) : 0;
+          return { id: p.id, label, grade: p.grade, count, total, winRateP };
+        });
+
+        return (
+          <div onClick={closeGroupModal} style={{ position: "fixed", inset: 0, background: "rgba(20,20,35,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 65 }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.card, borderRadius: 16, width: "100%", maxWidth: 640, height: "82vh", boxShadow: "0 20px 60px rgba(20,20,35,0.35)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: `1px solid ${COLORS.border}` }}>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700 }}>{openGroup.name}</div>
+                  <div style={{ fontSize: 11.5, color: COLORS.textMuted }}>{groupMembers.length} member{groupMembers.length === 1 ? "" : "s"}</div>
+                </div>
+                <button onClick={closeGroupModal} style={deleteBtnStyle_()} aria-label="Close">✕</button>
+              </div>
+
+              {groupDataLoading ? (
+                <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.textMuted, fontSize: 13 }}>Loading…</div>
+              ) : groupDataError ? (
+                <div style={{ padding: 20 }}>
+                  <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>{groupDataError}</div>
+                </div>
+              ) : groupView === "settings" ? (
+                <div style={{ flex: 1, overflowY: "auto", padding: 20, display: "grid", gap: 20, alignContent: "start" }}>
+                  <button type="button" onClick={() => setGroupView("chat")} style={{ ...ghostBtnStyle_(), justifySelf: "start" }}>← Back to chat</button>
+
+                  <form onSubmit={saveGroupName} style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+                    <Field label="Group name" style={{ flex: "1 1 200px" }}>
+                      <input type="text" value={groupNameDraft} onChange={(e) => setGroupNameDraft(e.target.value)} style={inputStyle_()} />
+                    </Field>
+                    <button type="submit" style={primaryBtnStyle_()}>Save</button>
+                  </form>
+
+                  {groupSettingsError && (
+                    <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>{groupSettingsError}</div>
+                  )}
+
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>MEMBERS</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      {groupMembers.map((m) => (
+                        <span key={m.id} style={{ fontSize: 12.5, fontWeight: 600, background: COLORS.subtleBg, border: `1px solid ${COLORS.border}`, borderRadius: 20, padding: "6px 14px" }}>
+                          {m.profile ? (m.profile.display_name || m.profile.email) : "Unknown"}{m.id === userId ? " (you)" : ""}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>CONFLUENCES</div>
+                    <form onSubmit={addGroupConfluence} style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                      <input type="text" value={newGroupConfluenceName} onChange={(e) => setNewGroupConfluenceName(e.target.value)} placeholder="e.g. IFVG" style={inputStyle_()} />
+                      <button type="submit" style={primaryBtnStyle_()}>Add</button>
+                    </form>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      {groupConfluences.map((c) => (
+                        <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: COLORS.subtleBg, border: `1.5px solid ${COLORS.border}`, borderRadius: 20, padding: "6px 8px 6px 14px", fontSize: 12.5, fontWeight: 600 }}>
+                          {c.name}
+                          <button onClick={() => deleteGroupConfluence(c.id)} style={{ ...deleteBtnStyle_(), padding: 0, fontSize: 12 }} aria-label={`Delete ${c.name}`}>✕</button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>TARGETS</div>
+                    <form onSubmit={addGroupTargetTag} style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                      <input type="text" value={newGroupTargetTagName} onChange={(e) => setNewGroupTargetTagName(e.target.value)} placeholder="e.g. Previous day high" style={inputStyle_()} />
+                      <button type="submit" style={primaryBtnStyle_()}>Add</button>
+                    </form>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      {groupTargetTags.map((tg) => (
+                        <span key={tg.id} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: COLORS.subtleBg, border: `1.5px solid ${COLORS.border}`, borderRadius: 20, padding: "6px 8px 6px 14px", fontSize: 12.5, fontWeight: 600 }}>
+                          {tg.name}
+                          <button onClick={() => deleteGroupTargetTag(tg.id)} style={{ ...deleteBtnStyle_(), padding: 0, fontSize: 12 }} aria-label={`Delete ${tg.name}`}>✕</button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>TRADING PATTERNS</div>
+                    {groupPatternPerf.length === 0 ? (
+                      <EmptyState text="No group patterns yet — add confluences in Settings (gear icon below), then tag a trade below." />
+                    ) : (
+                      <div style={{ display: "grid", gap: 8, marginBottom: 18 }}>
+                        {groupPatternPerf.map((p) => (
+                          <div key={p.id} style={{ background: COLORS.subtleBg, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 12 }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6, gap: 8, flexWrap: "wrap" }}>
+                              <span style={{ fontSize: 13, fontWeight: 700 }}>{p.label}</span>
+                              <select value={p.grade || ""} onChange={(e) => updateGroupPatternGrade(p.id, e.target.value)} style={{ ...inputStyle_(), width: "auto", padding: "4px 8px", fontSize: 12 }}>
+                                <option value="">Ungraded</option>
+                                {GRADES.slice().reverse().map((g) => <option key={g} value={g}>{g}</option>)}
+                              </select>
+                            </div>
+                            {p.count === 0 ? (
+                              <div style={{ fontSize: 11.5, color: COLORS.textMuted }}>No tagged trades yet.</div>
+                            ) : (
+                              <div className="mono" style={{ display: "flex", gap: 14, fontSize: 11.5, color: COLORS.textMuted, flexWrap: "wrap" }}>
+                                <span>{p.count} trade{p.count === 1 ? "" : "s"}</span>
+                                <span>Win rate <span style={{ fontWeight: 700, color: COLORS.text }}>{p.winRateP}%</span></span>
+                                <span>Total <span style={{ fontWeight: 700, color: p.total >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(p.total)}</span></span>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <details style={{ marginBottom: 20 }}>
+                      <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 700, color: COLORS.accent }}>+ Tag one of your trades</summary>
+                      <form onSubmit={tagTradeIntoGroup} style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                        <select value={tagTradeId} onChange={(e) => setTagTradeId(e.target.value)} style={inputStyle_()}>
+                          <option value="">Select a trade…</option>
+                          {trades.filter((t) => t.entryType !== "payout").map((t) => (
+                            <option key={t.id} value={t.id}>{tradeLabel(t)}</option>
+                          ))}
+                        </select>
+                        {groupConfluences.length === 0 ? (
+                          <div style={{ fontSize: 12, color: COLORS.textMuted }}>Add group confluences in Settings first.</div>
+                        ) : (
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {groupConfluences.map((c) => {
+                              const active = tagConfluenceIds.includes(c.id);
+                              return (
+                                <button type="button" key={c.id} onClick={() => toggleTagConfluence(c.id)} style={{ background: active ? COLORS.accentSoft : COLORS.subtleBg, border: `1.5px solid ${active ? COLORS.accent : COLORS.border}`, color: active ? COLORS.accent : COLORS.textMuted, padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                                  {c.name}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {groupTargetTags.length > 0 && (
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {groupTargetTags.map((tg) => {
+                              const active = tagTargetTagIds.includes(tg.id);
+                              return (
+                                <button type="button" key={tg.id} onClick={() => toggleTagTargetTag(tg.id)} style={{ background: active ? COLORS.accentSoft : COLORS.subtleBg, border: `1.5px solid ${active ? COLORS.accent : COLORS.border}`, color: active ? COLORS.accent : COLORS.textMuted, padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                                  {tg.name}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {tagError && (
+                          <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "8px 12px", borderRadius: 8, fontSize: 12.5 }}>{tagError}</div>
+                        )}
+                        <button type="submit" style={{ ...primaryBtnStyle_(), justifySelf: "start" }}>Tag trade</button>
+                      </form>
+                    </details>
+
+                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>CHAT</div>
+                    {groupMessages.length === 0 ? (
+                      <EmptyState text="No messages yet — say hi." />
+                    ) : (
+                      <div style={{ display: "grid", gap: 8 }}>
+                        {groupMessages.map((m) => {
+                          const sender = groupMembers.find((gm) => gm.id === m.user_id);
+                          const senderLabel = m.user_id === userId ? "You" : (sender && sender.profile ? (sender.profile.display_name || sender.profile.email) : "Unknown");
+                          const mine = m.user_id === userId;
+                          return (
+                            <div key={m.id} style={{ display: "flex", justifyContent: mine ? "flex-end" : "flex-start" }}>
+                              <div style={{ maxWidth: "78%", background: mine ? COLORS.accent : COLORS.subtleBg, color: mine ? "#fff" : COLORS.text, borderRadius: 14, padding: "8px 12px" }}>
+                                {!mine && <div style={{ fontSize: 10.5, fontWeight: 700, opacity: 0.7, marginBottom: 2 }}>{senderLabel}</div>}
+                                <div style={{ fontSize: 13.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.body}</div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <form onSubmit={sendGroupMessage} style={{ display: "flex", gap: 8, alignItems: "center", padding: 14, borderTop: `1px solid ${COLORS.border}` }}>
+                    <button type="button" onClick={() => setGroupView("settings")} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 18, padding: 4, color: COLORS.textMuted }} aria-label="Group settings">⚙️</button>
+                    <input
+                      type="text" value={groupMessageDraft} onChange={(e) => setGroupMessageDraft(e.target.value)}
+                      placeholder="Message the group…" style={{ ...inputStyle_(), flex: 1 }}
+                    />
+                    <button type="submit" disabled={groupMessageSending || !groupMessageDraft.trim()} style={{ ...primaryBtnStyle_(), opacity: (groupMessageSending || !groupMessageDraft.trim()) ? 0.6 : 1 }}>
+                      Send
+                    </button>
+                  </form>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

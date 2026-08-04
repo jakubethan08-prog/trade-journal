@@ -555,3 +555,289 @@ end $$;
 update public.trades set duration_seconds = 0 where duration_seconds is null;
 alter table public.trades alter column duration_seconds set default 0;
 alter table public.trades alter column duration_seconds set not null;
+
+-- =========================================================================
+-- Groups — a set of friends who share confluences/targets (built the same
+-- way as the personal ones) and see a pooled "trading patterns" view built
+-- from whichever trades any member tags into the group, plus a simple chat.
+-- =========================================================================
+create table if not exists public.groups (
+  id uuid primary key default gen_random_uuid(),
+  creator_id uuid not null references public.profiles (id) on delete cascade,
+  name text not null,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.group_members (
+  group_id uuid not null references public.groups (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  joined_at timestamptz not null default now(),
+  primary key (group_id, user_id)
+);
+
+create index if not exists group_members_user_idx on public.group_members (user_id);
+
+-- SECURITY DEFINER helper: policies below check group membership through
+-- this function instead of querying group_members directly from a policy
+-- ON group_members itself, which Postgres rejects as infinite recursion.
+create or replace function public.is_group_member(p_group_id uuid, p_user_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from public.group_members gm
+    where gm.group_id = p_group_id and gm.user_id = p_user_id
+  );
+$$;
+grant execute on function public.is_group_member(uuid, uuid) to authenticated;
+
+alter table public.groups enable row level security;
+drop policy if exists "select groups you're in" on public.groups;
+create policy "select groups you're in" on public.groups
+  for select using (public.is_group_member(id, auth.uid()));
+drop policy if exists "update groups you're in" on public.groups;
+create policy "update groups you're in" on public.groups
+  for update using (public.is_group_member(id, auth.uid())) with check (public.is_group_member(id, auth.uid()));
+-- Deliberately no insert policy: rows are only created through
+-- create_group() below, which also seeds the creator's own membership row.
+
+alter table public.group_members enable row level security;
+drop policy if exists "select own group memberships" on public.group_members;
+create policy "select own group memberships" on public.group_members
+  for select using (public.is_group_member(group_id, auth.uid()));
+drop policy if exists "leave group" on public.group_members;
+create policy "leave group" on public.group_members
+  for delete using (auth.uid() = user_id);
+
+-- Let group members see each other's profiles (name/email), even if two
+-- members aren't directly friends with each other.
+drop policy if exists "select group member profiles" on public.profiles;
+create policy "select group member profiles" on public.profiles
+  for select using (
+    exists (
+      select 1 from public.group_members gm
+      where gm.user_id = profiles.id and public.is_group_member(gm.group_id, auth.uid())
+    )
+  );
+
+-- Creates a group, adds the caller as a member, and adds any of the given
+-- member ids who are the caller's accepted friends — enforces "groups are
+-- built from friends" at the database level, not just in the UI.
+create or replace function public.create_group(p_name text, p_member_ids uuid[])
+returns public.groups
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  new_group public.groups;
+  m uuid;
+begin
+  if p_name is null or trim(p_name) = '' then
+    raise exception 'Group name is required.';
+  end if;
+
+  insert into public.groups (creator_id, name) values (auth.uid(), trim(p_name))
+  returning * into new_group;
+
+  insert into public.group_members (group_id, user_id) values (new_group.id, auth.uid());
+
+  if p_member_ids is not null then
+    foreach m in array p_member_ids loop
+      if m <> auth.uid() and exists (
+        select 1 from public.friendships f
+        where f.status = 'accepted'
+          and ((f.requester_id = auth.uid() and f.addressee_id = m)
+            or (f.addressee_id = auth.uid() and f.requester_id = m))
+      ) then
+        insert into public.group_members (group_id, user_id) values (new_group.id, m)
+        on conflict do nothing;
+      end if;
+    end loop;
+  end if;
+
+  return new_group;
+end;
+$$;
+grant execute on function public.create_group(text, uuid[]) to authenticated;
+
+-- =========================================================================
+-- group_messages — plain-text group chat, live via Supabase Realtime
+-- =========================================================================
+create table if not exists public.group_messages (
+  id uuid primary key default gen_random_uuid(),
+  group_id uuid not null references public.groups (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  body text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists group_messages_group_idx on public.group_messages (group_id, created_at);
+
+alter table public.group_messages enable row level security;
+drop policy if exists "select group messages" on public.group_messages;
+create policy "select group messages" on public.group_messages
+  for select using (public.is_group_member(group_id, auth.uid()));
+drop policy if exists "insert group messages" on public.group_messages;
+create policy "insert group messages" on public.group_messages
+  for insert with check (public.is_group_member(group_id, auth.uid()) and auth.uid() = user_id);
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'group_messages'
+  ) then
+    alter publication supabase_realtime add table public.group_messages;
+  end if;
+end $$;
+
+-- =========================================================================
+-- group_confluences / group_target_tags — same idea as the personal
+-- confluences/target_tags, scoped to a group instead of a user
+-- =========================================================================
+create table if not exists public.group_confluences (
+  id uuid primary key default gen_random_uuid(),
+  group_id uuid not null references public.groups (id) on delete cascade,
+  name text not null,
+  created_at timestamptz not null default now(),
+  unique (group_id, name)
+);
+
+alter table public.group_confluences enable row level security;
+drop policy if exists "select group confluences" on public.group_confluences;
+create policy "select group confluences" on public.group_confluences
+  for select using (public.is_group_member(group_id, auth.uid()));
+drop policy if exists "insert group confluences" on public.group_confluences;
+create policy "insert group confluences" on public.group_confluences
+  for insert with check (public.is_group_member(group_id, auth.uid()));
+drop policy if exists "delete group confluences" on public.group_confluences;
+create policy "delete group confluences" on public.group_confluences
+  for delete using (public.is_group_member(group_id, auth.uid()));
+
+create table if not exists public.group_target_tags (
+  id uuid primary key default gen_random_uuid(),
+  group_id uuid not null references public.groups (id) on delete cascade,
+  name text not null,
+  created_at timestamptz not null default now(),
+  unique (group_id, name)
+);
+
+alter table public.group_target_tags enable row level security;
+drop policy if exists "select group target tags" on public.group_target_tags;
+create policy "select group target tags" on public.group_target_tags
+  for select using (public.is_group_member(group_id, auth.uid()));
+drop policy if exists "insert group target tags" on public.group_target_tags;
+create policy "insert group target tags" on public.group_target_tags
+  for insert with check (public.is_group_member(group_id, auth.uid()));
+drop policy if exists "delete group target tags" on public.group_target_tags;
+create policy "delete group target tags" on public.group_target_tags
+  for delete using (public.is_group_member(group_id, auth.uid()));
+
+-- =========================================================================
+-- group_trade_confluences / group_trade_target_tags — a member tags one of
+-- THEIR OWN trades with a group confluence/target. This is also what makes
+-- that trade visible to the rest of the group (see the trades policy at the
+-- bottom) — only trades explicitly tagged in, never a member's full history.
+-- =========================================================================
+create table if not exists public.group_trade_confluences (
+  id uuid primary key default gen_random_uuid(),
+  group_id uuid not null references public.groups (id) on delete cascade,
+  trade_id uuid not null references public.trades (id) on delete cascade,
+  group_confluence_id uuid not null references public.group_confluences (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  timeframe text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists group_trade_confluences_group_idx on public.group_trade_confluences (group_id);
+create index if not exists group_trade_confluences_trade_idx on public.group_trade_confluences (trade_id);
+
+alter table public.group_trade_confluences enable row level security;
+drop policy if exists "select group trade confluences" on public.group_trade_confluences;
+create policy "select group trade confluences" on public.group_trade_confluences
+  for select using (public.is_group_member(group_id, auth.uid()));
+drop policy if exists "insert own group trade confluences" on public.group_trade_confluences;
+create policy "insert own group trade confluences" on public.group_trade_confluences
+  for insert with check (auth.uid() = user_id and public.is_group_member(group_id, auth.uid()));
+drop policy if exists "delete own group trade confluences" on public.group_trade_confluences;
+create policy "delete own group trade confluences" on public.group_trade_confluences
+  for delete using (auth.uid() = user_id);
+
+create table if not exists public.group_trade_target_tags (
+  group_id uuid not null references public.groups (id) on delete cascade,
+  trade_id uuid not null references public.trades (id) on delete cascade,
+  group_target_tag_id uuid not null references public.group_target_tags (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  primary key (trade_id, group_target_tag_id)
+);
+
+alter table public.group_trade_target_tags enable row level security;
+drop policy if exists "select group trade target tags" on public.group_trade_target_tags;
+create policy "select group trade target tags" on public.group_trade_target_tags
+  for select using (public.is_group_member(group_id, auth.uid()));
+drop policy if exists "insert own group trade target tags" on public.group_trade_target_tags;
+create policy "insert own group trade target tags" on public.group_trade_target_tags
+  for insert with check (auth.uid() = user_id and public.is_group_member(group_id, auth.uid()));
+drop policy if exists "delete own group trade target tags" on public.group_trade_target_tags;
+create policy "delete own group trade target tags" on public.group_trade_target_tags
+  for delete using (auth.uid() = user_id);
+
+-- =========================================================================
+-- group_patterns / group_pattern_confluences — same auto-created-combination
+-- idea as personal patterns, scoped to the group and pooling every member's
+-- tagged trades together.
+-- =========================================================================
+create table if not exists public.group_patterns (
+  id uuid primary key default gen_random_uuid(),
+  group_id uuid not null references public.groups (id) on delete cascade,
+  grade text check (grade in ('B-', 'B', 'B+', 'A-', 'A', 'A+', 'A++')),
+  created_at timestamptz not null default now()
+);
+
+alter table public.group_patterns enable row level security;
+drop policy if exists "select group patterns" on public.group_patterns;
+create policy "select group patterns" on public.group_patterns
+  for select using (public.is_group_member(group_id, auth.uid()));
+drop policy if exists "insert group patterns" on public.group_patterns;
+create policy "insert group patterns" on public.group_patterns
+  for insert with check (public.is_group_member(group_id, auth.uid()));
+drop policy if exists "update group patterns" on public.group_patterns;
+create policy "update group patterns" on public.group_patterns
+  for update using (public.is_group_member(group_id, auth.uid())) with check (public.is_group_member(group_id, auth.uid()));
+drop policy if exists "delete group patterns" on public.group_patterns;
+create policy "delete group patterns" on public.group_patterns
+  for delete using (public.is_group_member(group_id, auth.uid()));
+
+create table if not exists public.group_pattern_confluences (
+  group_pattern_id uuid not null references public.group_patterns (id) on delete cascade,
+  group_confluence_id uuid not null references public.group_confluences (id) on delete cascade,
+  group_id uuid not null references public.groups (id) on delete cascade,
+  primary key (group_pattern_id, group_confluence_id)
+);
+
+alter table public.group_pattern_confluences enable row level security;
+drop policy if exists "select group pattern confluences" on public.group_pattern_confluences;
+create policy "select group pattern confluences" on public.group_pattern_confluences
+  for select using (public.is_group_member(group_id, auth.uid()));
+drop policy if exists "insert group pattern confluences" on public.group_pattern_confluences;
+create policy "insert group pattern confluences" on public.group_pattern_confluences
+  for insert with check (public.is_group_member(group_id, auth.uid()));
+drop policy if exists "delete group pattern confluences" on public.group_pattern_confluences;
+create policy "delete group pattern confluences" on public.group_pattern_confluences
+  for delete using (public.is_group_member(group_id, auth.uid()));
+
+-- Additional select policy on trades (OR'd with the existing ones) — a
+-- group member can see a trade ONLY if it's been explicitly tagged into a
+-- group they're also in, never a co-member's full trade history.
+drop policy if exists "select group-tagged trades for group members" on public.trades;
+create policy "select group-tagged trades for group members" on public.trades
+  for select using (
+    exists (
+      select 1 from public.group_trade_confluences gtc
+      where gtc.trade_id = trades.id and public.is_group_member(gtc.group_id, auth.uid())
+    )
+  );
