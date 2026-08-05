@@ -1770,7 +1770,10 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     if (error) return;
     const pcRows = sorted.map((groupConfluenceId) => ({ group_pattern_id: newPattern.id, group_confluence_id: groupConfluenceId, group_id: openGroup.id }));
     const { error: pcError } = await supabaseClient.from("group_pattern_confluences").insert(pcRows);
-    if (pcError) return;
+    if (pcError) {
+      await supabaseClient.from("group_patterns").delete().eq("id", newPattern.id);
+      return;
+    }
     setGroupPatterns((prev) => [...prev, newPattern]);
     setGroupPatternConfluenceLinks((prev) => [...prev, ...pcRows]);
   }
@@ -1911,7 +1914,11 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     if (error) return;
     const pcRows = sorted.map((confluenceId) => ({ pattern_id: newPattern.id, confluence_id: confluenceId, user_id: userId }));
     const { error: pcError } = await supabaseClient.from("pattern_confluences").insert(pcRows);
-    if (pcError) return;
+    if (pcError) {
+      // Don't leave a "naked" pattern behind with no confluences linked to it.
+      await supabaseClient.from("patterns").delete().eq("id", newPattern.id);
+      return;
+    }
     setPatternsList((prev) => [...prev, newPattern]);
     setPatternConfluenceLinks((prev) => [...prev, ...pcRows]);
   }
@@ -2293,18 +2300,22 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   function sameIds(a, b) {
     return a.length === b.length && a.every((v, i) => v === b[i]);
   }
-  const patternPerf = patternsList.map((p) => {
-    const confIds = patternConfluenceMap[p.id] || [];
-    const label = confIds.length ? confIds.map((id) => confluenceNameById[id] || "?").join(" + ") : "—";
-    const taggedTrades = tradingOnly.filter((t) => sameIds(tradeConfluenceMap[t.id] || [], confIds));
-    const count = taggedTrades.length;
-    const total = taggedTrades.reduce((s, t) => s + t.pnl, 0);
-    const wins = taggedTrades.filter((t) => t.pnl > 0).length;
-    const winRateP = count ? Math.round((wins / count) * 100) : 0;
-    const biggestWin = count ? Math.max(...taggedTrades.map((t) => t.pnl)) : null;
-    const biggestLoss = count ? Math.min(...taggedTrades.map((t) => t.pnl)) : null;
-    return { id: p.id, label, grade: p.grade, count, total, winRateP, biggestWin, biggestLoss };
-  });
+  const patternPerf = patternsList
+    // A pattern with zero linked confluences is a "naked" leftover from a
+    // failed insert, not a real pattern — never show it or match trades to it.
+    .filter((p) => (patternConfluenceMap[p.id] || []).length > 0)
+    .map((p) => {
+      const confIds = patternConfluenceMap[p.id] || [];
+      const label = confIds.map((id) => confluenceNameById[id] || "?").join(" + ");
+      const taggedTrades = tradingOnly.filter((t) => sameIds(tradeConfluenceMap[t.id] || [], confIds));
+      const count = taggedTrades.length;
+      const total = taggedTrades.reduce((s, t) => s + t.pnl, 0);
+      const wins = taggedTrades.filter((t) => t.pnl > 0).length;
+      const winRateP = count ? Math.round((wins / count) * 100) : 0;
+      const biggestWin = count ? Math.max(...taggedTrades.map((t) => t.pnl)) : null;
+      const biggestLoss = count ? Math.min(...taggedTrades.map((t) => t.pnl)) : null;
+      return { id: p.id, label, grade: p.grade, count, total, winRateP, biggestWin, biggestLoss };
+    });
   const ratedPatternPerf = patternPerf.filter((p) => p.count > 0);
   const bestConfluencePattern = ratedPatternPerf.length
     ? [...ratedPatternPerf].sort((a, b) => b.total - a.total)[0]
@@ -4025,9 +4036,11 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           groupPatternConfluenceMap[l.group_pattern_id].push(l.group_confluence_id);
         });
         Object.keys(groupPatternConfluenceMap).forEach((k) => groupPatternConfluenceMap[k].sort());
-        const groupPatternPerf = groupPatterns.map((p) => {
+        const groupPatternPerf = groupPatterns
+          .filter((p) => (groupPatternConfluenceMap[p.id] || []).length > 0)
+          .map((p) => {
           const confIds = groupPatternConfluenceMap[p.id] || [];
-          const label = confIds.length ? confIds.map((id) => groupConfluenceNameById[id] || "?").join(" + ") : "—";
+          const label = confIds.map((id) => groupConfluenceNameById[id] || "?").join(" + ");
           const taggedTradeIds = Object.keys(groupTradeConfluenceMap).filter((tid) => {
             const arr = groupTradeConfluenceMap[tid];
             return arr.length === confIds.length && arr.every((v, i) => v === confIds[i]);

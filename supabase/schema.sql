@@ -542,6 +542,14 @@ create policy "delete own pattern confluences" on public.pattern_confluences
 delete from public.pattern_confluences pc
 where not exists (select 1 from public.patterns p where p.id = pc.pattern_id);
 
+-- One-time cleanup: "naked" patterns with zero linked confluences (left
+-- behind if the pattern_confluences insert failed right after the pattern
+-- row was created, before the app started rolling that back itself). These
+-- show up as an unlabeled "—" pattern that wrongly matches any trade with
+-- no confluences tagged at all. Safe to leave here permanently.
+delete from public.patterns p
+where not exists (select 1 from public.pattern_confluences pc where pc.pattern_id = p.id);
+
 -- =========================================================================
 -- trades.duration migrates from whole minutes to whole seconds, so the app
 -- can show/edit duration as hours + minutes + seconds instead of just
@@ -848,6 +856,11 @@ create policy "insert group pattern confluences" on public.group_pattern_conflue
 drop policy if exists "delete group pattern confluences" on public.group_pattern_confluences;
 create policy "delete group pattern confluences" on public.group_pattern_confluences
   for delete using (public.is_group_member(group_id, auth.uid()));
+
+-- One-time cleanup: same "naked pattern" issue as the personal patterns
+-- table above, mirrored here for groups. Safe to leave permanently.
+delete from public.group_patterns gp
+where not exists (select 1 from public.group_pattern_confluences gpc where gpc.group_pattern_id = gp.id);
 
 -- Additional select policy on trades (OR'd with the existing ones) — a
 -- group member can see a trade ONLY if it's been explicitly tagged into a
