@@ -1152,6 +1152,8 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const [viewTradeId, setViewTradeId] = useState(null);
   const [editingTradeId, setEditingTradeId] = useState(null);
   const [editForm, setEditForm] = useState(null);
+  const [editPickConfluenceId, setEditPickConfluenceId] = useState("");
+  const [editPickTimeframe, setEditPickTimeframe] = useState("");
 
   const [jDate, setJDate] = useState(todayStr());
   const [jMood, setJMood] = useState("calm");
@@ -2109,6 +2111,37 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     setEditForm(null);
   }
 
+  async function addConfluenceToTrade(tradeId, confluenceId, timeframe) {
+    if (!confluenceId) return;
+    const { data, error } = await supabaseClient.from("trade_confluences").insert({
+      trade_id: tradeId, confluence_id: confluenceId, user_id: userId, timeframe: timeframe || null,
+    }).select().single();
+    if (error) return;
+    const nextLinks = [...tradeConfluenceLinks, data];
+    setTradeConfluenceLinks(nextLinks);
+    const distinctIds = Array.from(new Set(nextLinks.filter((l) => l.trade_id === tradeId).map((l) => l.confluence_id)));
+    await ensurePatternForConfluences(distinctIds);
+    setEditPickConfluenceId(""); setEditPickTimeframe("");
+  }
+
+  async function removeConfluenceFromTrade(linkId) {
+    const { error } = await supabaseClient.from("trade_confluences").delete().eq("id", linkId);
+    if (error) return;
+    setTradeConfluenceLinks(tradeConfluenceLinks.filter((l) => l.id !== linkId));
+  }
+
+  async function toggleTargetTagOnTrade(tradeId, targetTagId, currentlyActive) {
+    if (currentlyActive) {
+      const { error } = await supabaseClient.from("trade_target_tags").delete().eq("trade_id", tradeId).eq("target_tag_id", targetTagId);
+      if (error) return;
+      setTradeTargetTagLinks(tradeTargetTagLinks.filter((l) => !(l.trade_id === tradeId && l.target_tag_id === targetTagId)));
+    } else {
+      const { data, error } = await supabaseClient.from("trade_target_tags").insert({ trade_id: tradeId, target_tag_id: targetTagId, user_id: userId }).select().single();
+      if (error) return;
+      setTradeTargetTagLinks([...tradeTargetTagLinks, data]);
+    }
+  }
+
   async function addMediaFiles(tradeId, files) {
     const newMedia = [];
     for (const f of files) {
@@ -2798,7 +2831,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                         </thead>
                         <tbody>
                           {sorted.map((t) => (
-                            <tr key={t.id} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+                            <tr key={t.id} onClick={() => setViewTradeId(t.id)} style={{ borderBottom: `1px solid ${COLORS.border}`, cursor: "pointer" }}>
                               <td className="mono" style={{ padding: "10px 14px", color: COLORS.textMuted, whiteSpace: "nowrap" }}>#{tradeNumberMap.get(t.id)}</td>
                               <td className="mono" style={{ padding: "10px 14px", color: COLORS.textMuted, whiteSpace: "nowrap" }}>{t.date}</td>
                               {!isPayoutView && (
@@ -2840,7 +2873,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                               </td>
                               <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
                                 <button
-                                  onClick={() => setMediaModalTradeId(t.id)}
+                                  onClick={(e) => { e.stopPropagation(); setMediaModalTradeId(t.id); }}
                                   style={{
                                     display: "inline-flex", alignItems: "center", gap: 5,
                                     background: (t.media || []).length ? COLORS.accentSoft : "transparent",
@@ -2853,8 +2886,8 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                                 </button>
                               </td>
                               <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
-                                <button onClick={() => openEditTrade(t)} style={{ ...deleteBtnStyle_(), marginRight: 4 }} aria-label="Edit trade">✎</button>
-                                <button onClick={() => deleteTrade(t.id)} style={deleteBtnStyle_()} aria-label="Delete trade">✕</button>
+                                <button onClick={(e) => { e.stopPropagation(); openEditTrade(t); }} style={{ ...deleteBtnStyle_(), marginRight: 4 }} aria-label="Edit trade">✎</button>
+                                <button onClick={(e) => { e.stopPropagation(); deleteTrade(t.id); }} style={deleteBtnStyle_()} aria-label="Delete trade">✕</button>
                               </td>
                             </tr>
                           ))}
@@ -3614,7 +3647,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
 
       {editingTradeId && editForm && (
         <div onClick={() => { setEditingTradeId(null); setEditForm(null); }} style={{ position: "fixed", inset: 0, background: "rgba(20,20,35,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 58 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.card, borderRadius: 16, padding: 24, width: "100%", maxWidth: 480, boxShadow: "0 20px 60px rgba(20,20,35,0.35)" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.card, borderRadius: 16, padding: 24, width: "100%", maxWidth: 520, maxHeight: "86vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(20,20,35,0.35)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <div style={{ fontSize: 16, fontWeight: 700 }}>Edit trade</div>
               <button onClick={() => { setEditingTradeId(null); setEditForm(null); }} style={deleteBtnStyle_()} aria-label="Close">✕</button>
@@ -3660,6 +3693,73 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                   </select>
                 </Field>
               </div>
+
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>CONFLUENCES</div>
+                {confluencesList.length === 0 ? (
+                  <div style={{ fontSize: 12, color: COLORS.textMuted }}>No confluences yet — add some in the Patterns tab.</div>
+                ) : (
+                  <>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                      <select value={editPickConfluenceId} onChange={(e) => setEditPickConfluenceId(e.target.value)} style={{ ...inputStyle_(), width: "auto" }}>
+                        <option value="">Select confluence…</option>
+                        {confluencesList.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                      <select value={editPickTimeframe} onChange={(e) => setEditPickTimeframe(e.target.value)} style={{ ...inputStyle_(), width: "auto" }}>
+                        <option value="">Timeframe</option>
+                        {TIMEFRAMES.map((tf) => <option key={tf.value} value={tf.value}>{tf.label}</option>)}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => addConfluenceToTrade(editingTradeId, editPickConfluenceId, editPickTimeframe)}
+                        disabled={!editPickConfluenceId}
+                        style={{ ...ghostBtnStyle_(), opacity: editPickConfluenceId ? 1 : 0.5 }}
+                      >
+                        + Add
+                      </button>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {tradeConfluenceLinks.filter((l) => l.trade_id === editingTradeId).map((l) => {
+                        const conf = confluencesList.find((c) => c.id === l.confluence_id);
+                        const tfLabel = l.timeframe ? TIMEFRAME_LABEL[l.timeframe] : null;
+                        return (
+                          <span key={l.id} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: COLORS.accentSoft, border: `1.5px solid ${COLORS.accent}`, color: COLORS.accent, borderRadius: 20, padding: "6px 8px 6px 14px", fontSize: 12.5, fontWeight: 600 }}>
+                            {conf ? conf.name : "?"}{tfLabel ? ` (${tfLabel})` : ""}
+                            <button type="button" onClick={() => removeConfluenceFromTrade(l.id)} style={{ ...deleteBtnStyle_(), padding: 0, fontSize: 12 }} aria-label="Remove">✕</button>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>TARGETS</div>
+                {targetTagsList.length === 0 ? (
+                  <div style={{ fontSize: 12, color: COLORS.textMuted }}>No targets yet — add some in the Patterns tab.</div>
+                ) : (
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {targetTagsList.map((tg) => {
+                      const active = tradeTargetTagLinks.some((l) => l.trade_id === editingTradeId && l.target_tag_id === tg.id);
+                      return (
+                        <button
+                          type="button" key={tg.id} onClick={() => toggleTargetTagOnTrade(editingTradeId, tg.id, active)}
+                          style={{
+                            background: active ? COLORS.accentSoft : COLORS.subtleBg,
+                            border: `1.5px solid ${active ? COLORS.accent : COLORS.border}`,
+                            color: active ? COLORS.accent : COLORS.textMuted,
+                            padding: "6px 14px", borderRadius: 20, fontSize: 12.5, fontWeight: 600, cursor: "pointer",
+                          }}
+                        >
+                          {tg.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               {editForm.error && (
                 <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "8px 12px", borderRadius: 8, fontSize: 13 }}>
                   {editForm.error}
@@ -3720,12 +3820,20 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                   </div>
                 ))}
               </div>
-              <button
-                onClick={() => { setViewTradeId(null); setMediaModalTradeId(t.id); }}
-                style={{ ...ghostBtnStyle_(), width: "100%" }}
-              >
-                📎 {(t.media || []).length ? `View ${(t.media || []).length} attachment${(t.media || []).length === 1 ? "" : "s"}` : "Add photos/videos"}
-              </button>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button
+                  onClick={() => { setViewTradeId(null); openEditTrade(t); }}
+                  style={{ ...primaryBtnStyle_(), flex: 1, textAlign: "center" }}
+                >
+                  ✎ Edit trade
+                </button>
+                <button
+                  onClick={() => { setViewTradeId(null); setMediaModalTradeId(t.id); }}
+                  style={{ ...ghostBtnStyle_(), flex: 1 }}
+                >
+                  📎 {(t.media || []).length ? `View ${(t.media || []).length} attachment${(t.media || []).length === 1 ? "" : "s"}` : "Add photos/videos"}
+                </button>
+              </div>
             </div>
           </div>
         );

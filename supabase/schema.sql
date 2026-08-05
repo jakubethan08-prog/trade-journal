@@ -339,10 +339,21 @@ create policy "select accepted friends trades" on public.trades
 -- selected on a trade in Add Trade.
 -- =========================================================================
 -- Superseded by confluences/patterns below (an earlier version of this
--- schema used "patterns" for what's now "confluences" — drop it clean if
--- it's already there, nothing depends on it existing).
-drop table if exists public.trade_patterns cascade;
-drop table if exists public.patterns cascade;
+-- schema used "patterns" for what's now "confluences"). Only drop it if
+-- it's still THAT old shape (has a `name` column) — guarded because an
+-- unconditional drop here would silently wipe every real pattern (and its
+-- pattern_confluences, via cascade) on every re-run of this file, since
+-- `patterns` always exists again once the migration below has run once.
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'patterns' and column_name = 'name'
+  ) then
+    drop table if exists public.trade_patterns cascade;
+    drop table if exists public.patterns cascade;
+  end if;
+end $$;
 
 create table if not exists public.confluences (
   id uuid primary key default gen_random_uuid(),
@@ -522,6 +533,14 @@ create policy "insert own pattern confluences" on public.pattern_confluences
 drop policy if exists "delete own pattern confluences" on public.pattern_confluences;
 create policy "delete own pattern confluences" on public.pattern_confluences
   for delete using (auth.uid() = user_id);
+
+-- One-time cleanup: rows left orphaned by past runs of the unconditional
+-- drop this file used to have (dropping `patterns` with CASCADE only drops
+-- the FK *constraint* on pattern_confluences, not the table itself — so old
+-- rows survived, pointing at pattern ids that no longer exist). Safe to
+-- leave here permanently; it's a no-op once cleaned up.
+delete from public.pattern_confluences pc
+where not exists (select 1 from public.patterns p where p.id = pc.pattern_id);
 
 -- =========================================================================
 -- trades.duration migrates from whole minutes to whole seconds, so the app
