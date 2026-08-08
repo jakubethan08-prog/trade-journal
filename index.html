@@ -1978,12 +1978,6 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     setPatternConfluenceLinks((prev) => [...prev, ...pcRows]);
   }
 
-  async function updatePatternGrade(patternId, grade) {
-    const { error } = await supabaseClient.from("patterns").update({ grade: grade || null }).eq("id", patternId);
-    if (error) { setPatternFormError("Couldn't update that pattern's grade."); return; }
-    setPatternsList(patternsList.map((p) => (p.id === patternId ? { ...p, grade: grade || null } : p)));
-  }
-
   async function updatePatternName(patternId, name) {
     const trimmed = name.trim();
     const { error } = await supabaseClient.from("patterns").update({ name: trimmed || null }).eq("id", patternId);
@@ -3254,10 +3248,11 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                   <div key={p.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, gap: 10, flexWrap: "wrap" }}>
                       <input
+                        key={p.id + ":" + (p.name || p.label)}
                         type="text"
-                        defaultValue={p.name || ""}
-                        placeholder="Name this pattern (optional)"
-                        onBlur={(e) => { if (e.target.value.trim() !== (p.name || "")) updatePatternName(p.id, e.target.value); }}
+                        defaultValue={p.name || p.label}
+                        placeholder="Name this pattern"
+                        onBlur={(e) => { if (e.target.value.trim() !== (p.name || p.label)) updatePatternName(p.id, e.target.value); }}
                         style={{ ...inputStyle_(), width: "auto", flex: "1 1 200px", fontSize: 14, fontWeight: 700, border: "none", background: "transparent", padding: "2px 0" }}
                       />
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -3266,16 +3261,10 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                     </div>
                     <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                       <span>{p.label}</span>
-                      {p.grade && (
-                        <span>Grade: <b style={{ color: gradeColor(p.grade) || COLORS.text }}>{p.grade}</b></span>
-                      )}
-                      {p.autoGrade && (
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                          · <b style={{ color: gradeColor(p.autoGrade) || COLORS.text }}>{p.autoGrade}</b>
-                          {p.grade !== p.autoGrade && (
-                            <button onClick={() => updatePatternGrade(p.id, p.autoGrade)} style={{ ...ghostBtnStyle_(), padding: "2px 8px", fontSize: 11 }}>Use</button>
-                          )}
-                        </span>
+                      {p.autoGrade ? (
+                        <span>· <b style={{ color: gradeColor(p.autoGrade) || COLORS.text }}>{p.autoGrade}</b></span>
+                      ) : (
+                        <span>· Ungraded</span>
                       )}
                     </div>
                     {p.count === 0 ? (
