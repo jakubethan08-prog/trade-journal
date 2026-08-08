@@ -546,7 +546,7 @@ function smoothPath(pts) {
   return d;
 }
 
-function EquityChart({ points, width = 900, height = 220, profitTarget = null, maxLossLevel = null, axisStep = null, growthColor = null, profitColor = null, minBalanceColor = null, axisColor = null }) {
+function EquityChart({ points, width = 900, height = 220, profitTarget = null, maxLossLevel = null, axisStep = null, growthColor = null, profitColor = null, minBalanceColor = null, axisColor = null, payoutColor = null }) {
   const svgRef = useRef(null);
   const [hoverIdx, setHoverIdx] = useState(null);
 
@@ -705,6 +705,16 @@ function EquityChart({ points, width = 900, height = 220, profitTarget = null, m
       <path d={linePath} fill="none" stroke={lineColor} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
       <circle cx={xAt(points.length - 1)} cy={yAt(last.balance)} r="4.5" fill={lineColor} />
 
+      {/* Payout markers — a small dot on every point where a payout happened */}
+      {points.map((p, i) => {
+        if (!p.payoutTotal) return null;
+        return (
+          <circle key={`payout-${i}`} cx={xAt(i)} cy={yAt(p.balance)} r="5" fill={payoutColor || COLORS.payout} stroke={COLORS.card} strokeWidth="1.5">
+            <title>{`Payout: ${fmtMoney(p.payoutTotal)}`}</title>
+          </circle>
+        );
+      })}
+
       {/* x-axis */}
       <line x1="0" y1={height - padBottom + 10} x2={width - padRight} y2={height - padBottom + 10} stroke={axisColor || COLORS.border} strokeWidth="1" />
       {tickIdxs.map((i) => {
@@ -726,8 +736,9 @@ function EquityChart({ points, width = 900, height = 220, profitTarget = null, m
         const hx = xAt(hoverIdx);
         const hy = yAt(hp.balance);
         const hasMaxLoss = hp.minBalance !== null && hp.minBalance !== undefined && !Number.isNaN(hp.minBalance);
+        const hasPayout = !!hp.payoutTotal;
         const hoverDateLabel = hp.date ? new Date(hp.date + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
-        const boxW = 180, boxH = 20 + (hasMaxLoss ? 46 : 28);
+        const boxW = 180, boxH = 20 + (hasMaxLoss ? 46 : 28) + (hasPayout ? 17 : 0);
         const boxX = Math.min(Math.max(hx + 10, 0), width - boxW);
         const boxY = Math.min(Math.max(hy - boxH - 10, padTop), height - padBottom - boxH);
         return (
@@ -746,6 +757,11 @@ function EquityChart({ points, width = 900, height = 220, profitTarget = null, m
             {hasMaxLoss && (
               <text x={boxX + 10} y={boxY + 50} fontSize="11" fontWeight="700" fill={COLORS.textMuted}>
                 Minimum balance: {fmtMoney(hp.minBalance)}
+              </text>
+            )}
+            {hasPayout && (
+              <text x={boxX + 10} y={boxY + (hasMaxLoss ? 67 : 50)} fontSize="11" fontWeight="700" fill={payoutColor || COLORS.payout}>
+                Payout: {fmtMoney(hp.payoutTotal)}
               </text>
             )}
           </g>
@@ -2505,8 +2521,12 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const equityCurve = [];
   if (dayStart && dayEnd) {
     const dayPnl = {};
-    chronoTrades.forEach((t) => { dayPnl[t.date] = (dayPnl[t.date] || 0) + t.pnl; });
-    equityCurve.push({ date: prevDay(dayStart), balance: 0, minBalance: null });
+    const dayPayout = {};
+    chronoTrades.forEach((t) => {
+      dayPnl[t.date] = (dayPnl[t.date] || 0) + t.pnl;
+      if (t.entryType === "payout") dayPayout[t.date] = (dayPayout[t.date] || 0) + t.pnl;
+    });
+    equityCurve.push({ date: prevDay(dayStart), balance: 0, minBalance: null, payoutTotal: 0 });
     let running = 0;
     let peakToDate = 0;
     let cur = dayStart;
@@ -2516,7 +2536,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       peakToDate = Math.max(peakToDate, running);
       if (!isWeekend(cur) || dayPnl[cur] !== undefined) {
         const minBalance = maxLossNumForCurve !== null ? peakToDate - Math.abs(maxLossNumForCurve) : null;
-        equityCurve.push({ date: cur, balance: running, minBalance });
+        equityCurve.push({ date: cur, balance: running, minBalance, payoutTotal: dayPayout[cur] || 0 });
       }
       if (cur === dayEnd) break;
       cur = nextDay(cur);
@@ -3104,6 +3124,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                     profitColor={targets.profitColor || COLORS.win}
                     minBalanceColor={targets.minBalanceColor || COLORS.loss}
                     axisColor={targets.axisColor || null}
+                    payoutColor={targets.calPayoutColor || null}
                   />
                 </div>
               </div>
@@ -3864,6 +3885,14 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               <div style={{ display: "grid", gap: 8, marginBottom: 20 }}>
                 {dayTrades.map((t) => {
                   const linkedEntries = entries.filter((en) => en.tradeId === t.id);
+                  if (t.entryType === "payout") {
+                    return (
+                      <div key={t.id} style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ fontWeight: 700, fontSize: 13.5, color: COLORS.payout }}>Payout</span>
+                        <span className="mono" style={{ fontWeight: 700, fontSize: 14, color: COLORS.payout }}>{fmtMoney(t.pnl)}</span>
+                      </div>
+                    );
+                  }
                   return (
                     <div key={t.id} style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
@@ -4163,19 +4192,23 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
 
         const chronoF = [...friendTrades].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
         const dayPnlF = {};
-        chronoF.forEach((t) => { dayPnlF[t.date] = (dayPnlF[t.date] || 0) + t.pnl; });
+        const dayPayoutF = {};
+        chronoF.forEach((t) => {
+          dayPnlF[t.date] = (dayPnlF[t.date] || 0) + t.pnl;
+          if (t.entryType === "payout") dayPayoutF[t.date] = (dayPayoutF[t.date] || 0) + t.pnl;
+        });
         const equityCurveF = [];
         if (chronoF.length) {
           const startF = chronoF[0].date;
           const endF = chronoF[chronoF.length - 1].date;
-          equityCurveF.push({ date: prevDay(startF), balance: 0, minBalance: null });
+          equityCurveF.push({ date: prevDay(startF), balance: 0, minBalance: null, payoutTotal: 0 });
           let runningF = 0;
           let curF = startF;
           let guardF = 0;
           while (curF <= endF && guardF < 5000) {
             runningF += dayPnlF[curF] || 0;
             if (!isWeekend(curF) || dayPnlF[curF] !== undefined) {
-              equityCurveF.push({ date: curF, balance: runningF, minBalance: null });
+              equityCurveF.push({ date: curF, balance: runningF, minBalance: null, payoutTotal: dayPayoutF[curF] || 0 });
             }
             if (curF === endF) break;
             curF = nextDay(curF);
@@ -4222,7 +4255,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                     <StatCard label="Profit factor" value={profitFactorF === Infinity ? "∞" : profitFactorF.toFixed(2)} />
                     <StatCard label="Avg duration" value={fmtDuration(avgDurationF)} />
                   </div>
-                  <EquityChart points={equityCurveF} height={260} />
+                  <EquityChart points={equityCurveF} height={260} payoutColor={COLORS.payout} />
 
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "24px 0 12px" }}>
                     <button
