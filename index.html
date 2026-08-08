@@ -48,6 +48,11 @@ const MEDIA_BUCKET = "trade-media";
 
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// The one account that receives everyone's feedback instead of submitting
+// its own — matched by email, lowercased. Must also be granted read access
+// to every user's feedback row in supabase/schema.sql (get_all_feedback()).
+const ADMIN_FEEDBACK_EMAIL = "jakubethan08@icloud.com";
+
 const PAYOUT_COLOR = "#0EA5E9";
 
 const LIGHT_COLORS = {
@@ -1151,6 +1156,9 @@ function Paywall({ status, onLogout, onSubscribe, checkoutBusy, checkoutError })
 
 function TradeJournal({ session, onLogout, initialDisplayName }) {
   const userId = session.user.id;
+  // The one account that receives (and reads) everyone's feedback, instead
+  // of submitting its own. See ADMIN_FEEDBACK_EMAIL near the top of the file.
+  const isFeedbackAdmin = (session.user.email || "").trim().toLowerCase() === ADMIN_FEEDBACK_EMAIL;
   const [theme, setTheme] = useState(() => loadLocal(THEME_KEY, "light"));
   applyTheme(theme); // mutate the shared COLORS object before anything below reads it
 
@@ -1315,7 +1323,9 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       supabaseClient.from("target_tags").select("*").order("name", { ascending: true }),
       supabaseClient.from("trade_target_tags").select("*"),
       supabaseClient.from("profiles").select("leaderboard_opt_in").eq("id", userId).maybeSingle(),
-      supabaseClient.from("feedback").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
+      isFeedbackAdmin
+        ? supabaseClient.rpc("get_all_feedback")
+        : supabaseClient.from("feedback").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
     ]);
     if (tradesRes.error) throw tradesRes.error;
     if (entriesRes.error) throw entriesRes.error;
@@ -3763,32 +3773,44 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           </>
         ) : tab === "feedback" ? (
           <>
-            <form onSubmit={submitFeedback} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
-              <Field label="What should we build or fix next?">
-                <textarea
-                  value={feedbackMessage}
-                  onChange={(e) => { setFeedbackMessage(e.target.value); setFeedbackSentMsg(false); }}
-                  placeholder="Tell us what's working, what's not, or what you'd like to see…"
-                  rows={5}
-                  style={{ ...inputStyle_(), resize: "vertical", fontFamily: "inherit" }}
-                />
-              </Field>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <button type="submit" disabled={feedbackBusy} style={{ ...primaryBtnStyle_(), opacity: feedbackBusy ? 0.7 : 1 }}>
-                  {feedbackBusy ? "Sending…" : "Send feedback"}
-                </button>
-                {feedbackSentMsg && !feedbackError && <span style={{ fontSize: 12.5, color: COLORS.win }}>Thanks — got it!</span>}
-                {feedbackError && <span style={{ fontSize: 12.5, color: COLORS.loss }}>{feedbackError}</span>}
-              </div>
-            </form>
+            {!isFeedbackAdmin && (
+              <form onSubmit={submitFeedback} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                <Field label="What should we build or fix next?">
+                  <textarea
+                    value={feedbackMessage}
+                    onChange={(e) => { setFeedbackMessage(e.target.value); setFeedbackSentMsg(false); }}
+                    placeholder="Tell us what's working, what's not, or what you'd like to see…"
+                    rows={5}
+                    style={{ ...inputStyle_(), resize: "vertical", fontFamily: "inherit" }}
+                  />
+                </Field>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <button type="submit" disabled={feedbackBusy} style={{ ...primaryBtnStyle_(), opacity: feedbackBusy ? 0.7 : 1 }}>
+                    {feedbackBusy ? "Sending…" : "Send feedback"}
+                  </button>
+                  {feedbackSentMsg && !feedbackError && <span style={{ fontSize: 12.5, color: COLORS.win }}>Thanks — got it!</span>}
+                  {feedbackError && <span style={{ fontSize: 12.5, color: COLORS.loss }}>{feedbackError}</span>}
+                </div>
+              </form>
+            )}
 
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Your past feedback</div>
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>{isFeedbackAdmin ? "Feedback inbox" : "Your past feedback"}</div>
+            {isFeedbackAdmin && (
+              <div style={{ fontSize: 11.5, color: COLORS.textMuted, marginBottom: 16 }}>
+                Only visible to this account — every other user only ever sees their own submissions.
+              </div>
+            )}
             {pastFeedback.length === 0 ? (
-              <EmptyState text="Nothing sent yet." />
+              <EmptyState text={isFeedbackAdmin ? "No feedback submitted yet." : "Nothing sent yet."} />
             ) : (
               <div style={{ display: "grid", gap: 10 }}>
                 {pastFeedback.map((f) => (
                   <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                    {isFeedbackAdmin && (
+                      <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.accent, marginBottom: 6 }}>
+                        {f.display_name || f.email || "Unknown user"}
+                      </div>
+                    )}
                     <div style={{ fontSize: 13.5, color: COLORS.text, marginBottom: 6, whiteSpace: "pre-wrap" }}>{f.message}</div>
                     <div style={{ fontSize: 11.5, color: COLORS.textMuted }}>{new Date(f.created_at).toLocaleString()}</div>
                   </div>

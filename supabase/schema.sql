@@ -1075,3 +1075,28 @@ begin
     end if;
   end loop;
 end $$;
+
+-- =========================================================================
+-- Feedback inbox — one specific account (matched by email, hardcoded below)
+-- receives and reads EVERY user's feedback instead of submitting its own.
+-- get_all_feedback() is SECURITY DEFINER so it can bypass the "select own
+-- feedback" RLS policy above, but it does its own auth check internally:
+-- called by anyone other than the admin account, it returns an empty set,
+-- not an error and not other users' rows — feedback stays private between
+-- each submitter and the admin. The email must exactly match
+-- ADMIN_FEEDBACK_EMAIL in index.html.
+-- =========================================================================
+create or replace function public.get_all_feedback()
+returns table (id uuid, user_id uuid, display_name text, email text, message text, created_at timestamptz)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select f.id, f.user_id, coalesce(p.display_name, p.email, 'User') as display_name, p.email, f.message, f.created_at
+  from public.feedback f
+  join public.profiles p on p.id = f.user_id
+  where auth.uid() = (select id from public.profiles where lower(email) = lower('jakubethan08@icloud.com'))
+  order by f.created_at desc;
+$$;
+grant execute on function public.get_all_feedback() to authenticated;
