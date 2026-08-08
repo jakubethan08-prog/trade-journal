@@ -3563,6 +3563,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                         step="0.5"
                         value={c.points === 0 || c.points ? c.points : 0}
                         onChange={(e) => updateConfluencePoints(c.id, e.target.value)}
+                        onFocus={(e) => e.target.select()}
                         title="Points toward auto-grading"
                         style={{ width: 44, fontSize: 12, padding: "2px 4px", borderRadius: 8, border: `1px solid ${COLORS.border}`, background: COLORS.card, color: COLORS.text }}
                       />
@@ -3618,6 +3619,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                         step="0.5"
                         value={tg.value === 0 || tg.value ? tg.value : 0}
                         onChange={(e) => updateTargetTagValue(tg.id, e.target.value)}
+                        onFocus={(e) => e.target.select()}
                         title="Custom value"
                         style={{ width: 44, fontSize: 12, padding: "2px 4px", borderRadius: 8, border: `1px solid ${COLORS.border}`, background: COLORS.card, color: COLORS.text }}
                       />

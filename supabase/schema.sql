@@ -337,23 +337,17 @@ create policy "select accepted friends trades" on public.trades
 -- =========================================================================
 -- confluences — atomic, user-named tags (e.g. "IFVG", "HTF FVG", "CISD")
 -- selected on a trade in Add Trade.
--- =========================================================================
--- Superseded by confluences/patterns below (an earlier version of this
--- schema used "patterns" for what's now "confluences"). Only drop it if
--- it's still THAT old shape (has a `name` column) — guarded because an
--- unconditional drop here would silently wipe every real pattern (and its
--- pattern_confluences, via cascade) on every re-run of this file, since
--- `patterns` always exists again once the migration below has run once.
-do $$
-begin
-  if exists (
-    select 1 from information_schema.columns
-    where table_schema = 'public' and table_name = 'patterns' and column_name = 'name'
-  ) then
-    drop table if exists public.trade_patterns cascade;
-    drop table if exists public.patterns cascade;
-  end if;
-end $$;
+-- NOTE: this file used to have a guarded migration here that dropped
+-- public.patterns if it still had the OLD pre-split shape (detected by the
+-- presence of a `name` column, back when "patterns" meant what's now
+-- "confluences"). That migration completed long ago and has been removed —
+-- it became actively dangerous once patterns legitimately gained its own
+-- `name` column (for custom pattern naming, see below), because the guard
+-- could no longer tell the old shape apart from the new one and started
+-- dropping (and cascade-deleting pattern_confluences for) real, current
+-- patterns on every subsequent re-run of this file. See the repair block
+-- near the end of this file, which rebuilds any patterns that were wiped
+-- out by that bug.
 
 create table if not exists public.confluences (
   id uuid primary key default gen_random_uuid(),
@@ -984,3 +978,41 @@ alter table public.target_tags add column if not exists value numeric not null d
 drop policy if exists "update own target tags" on public.target_tags;
 create policy "update own target tags" on public.target_tags
   for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- =========================================================================
+-- REPAIR: rebuild any patterns wiped out by the now-removed guarded-drop
+-- bug above (see the NOTE near the top of the file, before `confluences`).
+-- For every distinct set of confluences actually tagged together on a
+-- trade, re-create the matching pattern/pattern_confluences rows if they
+-- don't already exist. Safe to run every time — it only ever fills in
+-- gaps, and does nothing once patterns are consistent with trade tagging.
+-- Custom names and manually-set grades on any patterns that were dropped
+-- cannot be recovered (that data lived only in the dropped rows) and will
+-- come back ungraded/unnamed.
+-- =========================================================================
+do $$
+declare
+  combo record;
+  new_pattern_id uuid;
+begin
+  for combo in
+    select tc.user_id, array_agg(distinct tc.confluence_id order by tc.confluence_id) as confluence_ids
+    from public.trade_confluences tc
+    group by tc.trade_id, tc.user_id
+  loop
+    if not exists (
+      select 1 from (
+        select pc.pattern_id, array_agg(pc.confluence_id order by pc.confluence_id) as ids
+        from public.pattern_confluences pc
+        join public.patterns p on p.id = pc.pattern_id
+        where p.user_id = combo.user_id
+        group by pc.pattern_id
+      ) existing
+      where existing.ids = combo.confluence_ids
+    ) then
+      insert into public.patterns (user_id) values (combo.user_id) returning id into new_pattern_id;
+      insert into public.pattern_confluences (pattern_id, confluence_id, user_id)
+      select new_pattern_id, cid, combo.user_id from unnest(combo.confluence_ids) as cid;
+    end if;
+  end loop;
+end $$;
