@@ -3271,7 +3271,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                       )}
                       {p.autoGrade && (
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                          · Auto-grade ({p.pointsTotal} pts): <b style={{ color: gradeColor(p.autoGrade) || COLORS.text }}>{p.autoGrade}</b>
+                          · <b style={{ color: gradeColor(p.autoGrade) || COLORS.text }}>{p.autoGrade}</b>
                           {p.grade !== p.autoGrade && (
                             <button onClick={() => updatePatternGrade(p.id, p.autoGrade)} style={{ ...ghostBtnStyle_(), padding: "2px 8px", fontSize: 11 }}>Use</button>
                           )}
