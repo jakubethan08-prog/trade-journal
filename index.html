@@ -2177,7 +2177,10 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       if (!targetLinkErr) setTradeTargetTagLinks([...tradeTargetTagLinks, ...insertedTargetLinks]);
     }
 
-    if (tConfluenceEntries.length || tTargetTags.length) {
+    // Payouts never count toward pattern stats (patternPerf only matches
+    // real trades), so tagging one would just create a pattern that can
+    // never show any trades — skip pattern creation entirely for payouts.
+    if (tEntryType !== "payout" && (tConfluenceEntries.length || tTargetTags.length)) {
       const distinctConfluenceIds = Array.from(new Set(tConfluenceEntries.map((e) => e.confluenceId)));
       await ensurePattern(distinctConfluenceIds, tTargetTags);
     }
@@ -2483,10 +2486,14 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       const autoGrade = computeAutoGrade(pointsTotal, targets.gradeThresholds);
       const sortedTrades = [...taggedTrades].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
       return { id: p.id, name: p.name || null, label, confLabel, tagLabel, grade: p.grade, count, total, winRateP, biggestWin, biggestLoss, pointsTotal, autoGrade, trades: sortedTrades };
-    });
-  const ratedPatternPerf = patternPerf.filter((p) => p.count > 0);
-  const bestConfluencePattern = ratedPatternPerf.length
-    ? [...ratedPatternPerf].sort((a, b) => b.total - a.total)[0]
+    })
+    // Never show (or let stats/naming/grading attach to) a pattern with no
+    // trades actually matching its exact combination — e.g. one left behind
+    // after every trade that had it was edited to remove the tag, or a
+    // payout (which never counts toward pattern stats) was tagged with it.
+    .filter((p) => p.count > 0);
+  const bestConfluencePattern = patternPerf.length
+    ? [...patternPerf].sort((a, b) => b.total - a.total)[0]
     : null;
 
   // ---- Calendar: group trades by date, build week rows with a trailing Total column ----
@@ -3318,19 +3325,22 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
             ) : (
               <div style={{ display: "grid", gap: 10, marginBottom: 28 }}>
                 {patternPerf.map((p) => (
-                  <div key={p.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, gap: 10, flexWrap: "wrap" }}>
+                  <div key={p.id} style={{ position: "relative", background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                    <button onClick={() => deletePatternRow(p.id)} style={{ ...deleteBtnStyle_(), position: "absolute", top: 12, right: 12 }} aria-label="Delete pattern">✕</button>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 10, padding: "0 30px" }}>
                       <input
                         key={p.id + ":" + (p.name || p.label)}
                         type="text"
                         defaultValue={p.name || p.label}
                         placeholder="Name this pattern"
                         onBlur={(e) => { if (e.target.value.trim() !== (p.name || p.label)) updatePatternName(p.id, e.target.value); }}
-                        style={{ ...inputStyle_(), width: "auto", flex: "1 1 200px", fontSize: 14, fontWeight: 700, border: "none", background: "transparent", padding: "2px 0" }}
+                        style={{ ...inputStyle_(), width: "auto", maxWidth: 280, textAlign: "center", fontSize: 14, fontWeight: 700, border: "none", background: "transparent", padding: "2px 0" }}
                       />
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <button onClick={() => deletePatternRow(p.id)} style={deleteBtnStyle_()} aria-label="Delete pattern">✕</button>
-                      </div>
+                      {p.autoGrade ? (
+                        <b style={{ fontSize: 14, color: gradeColor(p.autoGrade) || COLORS.text, whiteSpace: "nowrap" }}>{p.autoGrade}</b>
+                      ) : (
+                        <span style={{ fontSize: 12, color: COLORS.textMuted, whiteSpace: "nowrap" }}>Ungraded</span>
+                      )}
                     </div>
                     <div
                       onClick={() => setExpandedPatternId(expandedPatternId === p.id ? null : p.id)}
@@ -3346,11 +3356,6 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                       </div>
                     </div>
                     <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                      {p.autoGrade ? (
-                        <span><b style={{ color: gradeColor(p.autoGrade) || COLORS.text }}>{p.autoGrade}</b></span>
-                      ) : (
-                        <span>Ungraded</span>
-                      )}
                       <button
                         type="button"
                         onClick={() => setExpandedPatternId(expandedPatternId === p.id ? null : p.id)}
@@ -3359,34 +3364,44 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                         {expandedPatternId === p.id ? "Hide trades ▲" : "Show trades ▼"}
                       </button>
                     </div>
-                    {p.count === 0 ? (
-                      <div style={{ fontSize: 12.5, color: COLORS.textMuted }}>No trades tagged with this exact combination yet.</div>
-                    ) : (
-                      <div className="mono" style={{ display: "flex", gap: 20, fontSize: 12.5, color: COLORS.textMuted, flexWrap: "wrap" }}>
-                        <span>{p.count} trade{p.count === 1 ? "" : "s"}</span>
-                        <span>Win rate <span style={{ fontWeight: 700, color: COLORS.text }}>{p.winRateP}%</span></span>
-                        <span>Total P&L <span style={{ fontWeight: 700, color: p.total >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(p.total)}</span></span>
-                        <span>Biggest win <span style={{ fontWeight: 700, color: COLORS.win }}>{fmtMoney(p.biggestWin)}</span></span>
-                        <span>Biggest loss <span style={{ fontWeight: 700, color: COLORS.loss }}>{fmtMoney(p.biggestLoss)}</span></span>
-                      </div>
-                    )}
+                    <div className="mono" style={{ display: "flex", gap: 20, fontSize: 12.5, color: COLORS.textMuted, flexWrap: "wrap" }}>
+                      <span>{p.count} trade{p.count === 1 ? "" : "s"}</span>
+                      <span>Win rate <span style={{ fontWeight: 700, color: COLORS.text }}>{p.winRateP}%</span></span>
+                      <span>Total P&L <span style={{ fontWeight: 700, color: p.total >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(p.total)}</span></span>
+                      <span>Biggest win <span style={{ fontWeight: 700, color: COLORS.win }}>{fmtMoney(p.biggestWin)}</span></span>
+                      <span>Biggest loss <span style={{ fontWeight: 700, color: COLORS.loss }}>{fmtMoney(p.biggestLoss)}</span></span>
+                    </div>
                     {expandedPatternId === p.id && (
                       <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${COLORS.border}`, display: "grid", gap: 6 }}>
-                        {p.trades.length === 0 ? (
-                          <div style={{ fontSize: 12, color: COLORS.textMuted }}>No trades tagged with this exact combination yet.</div>
-                        ) : (
-                          p.trades.map((t) => (
-                            <div
-                              key={t.id}
-                              onClick={() => openEditTrade(t)}
-                              className="mono"
-                              style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: 12, padding: "6px 10px", background: COLORS.subtleBg, borderRadius: 8, cursor: "pointer" }}
-                            >
-                              <span style={{ color: COLORS.textMuted }}>#{tradeNumberMap.get(t.id)} · {t.date} · {t.symbol || "—"}</span>
-                              <span style={{ fontWeight: 700, color: t.pnl >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(t.pnl)}</span>
+                        {p.trades.map((t) => {
+                          const linkedEntries = entries.filter((en) => en.tradeId === t.id);
+                          return (
+                            <div key={t.id} style={{ background: COLORS.subtleBg, borderRadius: 8, padding: "6px 10px" }}>
+                              <div
+                                onClick={() => openEditTrade(t)}
+                                className="mono"
+                                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: 12, cursor: "pointer" }}
+                              >
+                                <span style={{ color: COLORS.textMuted }}>#{tradeNumberMap.get(t.id)} · {t.date} · {t.symbol || "—"}</span>
+                                <span style={{ fontWeight: 700, color: t.pnl >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(t.pnl)}</span>
+                              </div>
+                              {linkedEntries.length > 0 && (
+                                <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+                                  {linkedEntries.map((en) => {
+                                    const mi = moodInfo(en.mood);
+                                    return (
+                                      <div key={en.id} style={{ fontSize: 11, color: COLORS.accent, display: "flex", alignItems: "center", gap: 6 }}>
+                                        <span>🔗</span>
+                                        <span style={{ color: mi.color, fontWeight: 600 }}>{mi.label}</span>
+                                        {(en.feelingDetail || en.notes) && <span style={{ color: COLORS.textMuted }}>— {(en.feelingDetail || en.notes).slice(0, 60)}{(en.feelingDetail || en.notes).length > 60 ? "…" : ""}</span>}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
                             </div>
-                          ))
-                        )}
+                          );
+                        })}
                       </div>
                     )}
                   </div>
