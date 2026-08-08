@@ -1273,10 +1273,12 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const [tConfluenceEntries, setTConfluenceEntries] = useState([]); // [{ localId, confluenceId, timeframe }]
   const [pickConfluenceId, setPickConfluenceId] = useState("");
   const [pickTimeframe, setPickTimeframe] = useState("");
-  // Patterns: a specific COMBINATION of confluences, auto-created the first
-  // time a trade is tagged with that exact combo; gradeable B- to A++.
+  // Patterns: a specific COMBINATION of confluences AND target tags,
+  // auto-created the first time a trade is tagged with that exact combo;
+  // gradeable B- to A++.
   const [patternsList, setPatternsList] = useState([]);
   const [patternConfluenceLinks, setPatternConfluenceLinks] = useState([]);
+  const [patternTargetTagLinks, setPatternTargetTagLinks] = useState([]);
   // Target tags: same idea as confluences (atomic, user-named), separate
   // category, picked once each per trade (no repeats/timeframes).
   const [targetTagsList, setTargetTagsList] = useState([]);
@@ -1300,7 +1302,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
 
   // ---- Load this user's data from Supabase on mount ----
   async function reloadAllData() {
-    const [tradesRes, entriesRes, targetsRes, mediaRes, confluencesRes, tradeConfluencesRes, patternsRes, patternConfluencesRes, targetTagsRes, tradeTargetTagsRes, ownProfileRes, feedbackRes] = await Promise.all([
+    const [tradesRes, entriesRes, targetsRes, mediaRes, confluencesRes, tradeConfluencesRes, patternsRes, patternConfluencesRes, patternTargetTagsRes, targetTagsRes, tradeTargetTagsRes, ownProfileRes, feedbackRes] = await Promise.all([
       supabaseClient.from("trades").select("*").eq("user_id", userId).order("date", { ascending: false }),
       supabaseClient.from("journal_entries").select("*").order("date", { ascending: false }),
       supabaseClient.from("targets").select("*").eq("user_id", userId).maybeSingle(),
@@ -1309,6 +1311,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       supabaseClient.from("trade_confluences").select("*"),
       supabaseClient.from("patterns").select("*"),
       supabaseClient.from("pattern_confluences").select("*"),
+      supabaseClient.from("pattern_target_tags").select("*"),
       supabaseClient.from("target_tags").select("*").order("name", { ascending: true }),
       supabaseClient.from("trade_target_tags").select("*"),
       supabaseClient.from("profiles").select("leaderboard_opt_in").eq("id", userId).maybeSingle(),
@@ -1322,6 +1325,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     if (tradeConfluencesRes.error) throw tradeConfluencesRes.error;
     if (patternsRes.error) throw patternsRes.error;
     if (patternConfluencesRes.error) throw patternConfluencesRes.error;
+    if (patternTargetTagsRes.error) throw patternTargetTagsRes.error;
     if (targetTagsRes.error) throw targetTagsRes.error;
     if (tradeTargetTagsRes.error) throw tradeTargetTagsRes.error;
 
@@ -1343,6 +1347,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     setTradeConfluenceLinks(tradeConfluencesRes.data || []);
     setPatternsList(patternsRes.data || []);
     setPatternConfluenceLinks(patternConfluencesRes.data || []);
+    setPatternTargetTagLinks(patternTargetTagsRes.data || []);
     setTargetTagsList(targetTagsRes.data || []);
     setTradeTargetTagLinks(tradeTargetTagsRes.data || []);
     setLeaderboardOptIn(!!(ownProfileRes.data && ownProfileRes.data.leaderboard_opt_in));
@@ -1946,6 +1951,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     if (error) { setPatternFormError("Couldn't delete that target."); return; }
     setTargetTagsList(targetTagsList.filter((t) => t.id !== id));
     setTradeTargetTagLinks(tradeTargetTagLinks.filter((l) => l.target_tag_id !== id));
+    setPatternTargetTagLinks(patternTargetTagLinks.filter((l) => l.target_tag_id !== id));
     setTTargetTags(tTargetTags.filter((tid) => tid !== id));
   }
 
@@ -1960,38 +1966,54 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     setTTargetTags((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
 
-  // ---- Patterns — a specific combination of confluences, auto-created the first
-  // time a trade is tagged with that exact combo (order-independent match). ----
-  function findMatchingPatternId(sortedConfluenceIds) {
+  // ---- Patterns — a specific combination of confluences AND target tags,
+  // auto-created the first time a trade is tagged with that exact combo
+  // (order-independent match on both sets). ----
+  function idsById(links, patternKey, valueKey) {
     const byPattern = {};
-    patternConfluenceLinks.forEach((l) => {
-      if (!byPattern[l.pattern_id]) byPattern[l.pattern_id] = [];
-      byPattern[l.pattern_id].push(l.confluence_id);
+    links.forEach((l) => {
+      if (!byPattern[l[patternKey]]) byPattern[l[patternKey]] = [];
+      byPattern[l[patternKey]].push(l[valueKey]);
     });
-    for (const [patternId, ids] of Object.entries(byPattern)) {
-      const sorted = [...ids].sort();
-      if (sorted.length === sortedConfluenceIds.length && sorted.every((v, i) => v === sortedConfluenceIds[i])) {
+    Object.keys(byPattern).forEach((k) => { byPattern[k].sort(); });
+    return byPattern;
+  }
+  function sameSortedIds(a, b) {
+    return a.length === b.length && a.every((v, i) => v === b[i]);
+  }
+  function findMatchingPatternId(sortedConfluenceIds, sortedTargetTagIds) {
+    const confByPattern = idsById(patternConfluenceLinks, "pattern_id", "confluence_id");
+    const tagByPattern = idsById(patternTargetTagLinks, "pattern_id", "target_tag_id");
+    const patternIds = new Set([...Object.keys(confByPattern), ...Object.keys(tagByPattern)]);
+    for (const patternId of patternIds) {
+      if (sameSortedIds(confByPattern[patternId] || [], sortedConfluenceIds) && sameSortedIds(tagByPattern[patternId] || [], sortedTargetTagIds)) {
         return patternId;
       }
     }
     return null;
   }
 
-  async function ensurePatternForConfluences(confluenceIds) {
-    if (!confluenceIds.length) return;
-    const sorted = [...confluenceIds].sort();
-    if (findMatchingPatternId(sorted)) return;
+  async function ensurePattern(confluenceIds, targetTagIds) {
+    const sortedConf = [...(confluenceIds || [])].sort();
+    const sortedTags = [...(targetTagIds || [])].sort();
+    if (!sortedConf.length && !sortedTags.length) return;
+    if (findMatchingPatternId(sortedConf, sortedTags)) return;
     const { data: newPattern, error } = await supabaseClient.from("patterns").insert({ user_id: userId }).select().single();
     if (error) return;
-    const pcRows = sorted.map((confluenceId) => ({ pattern_id: newPattern.id, confluence_id: confluenceId, user_id: userId }));
-    const { error: pcError } = await supabaseClient.from("pattern_confluences").insert(pcRows);
-    if (pcError) {
-      // Don't leave a "naked" pattern behind with no confluences linked to it.
+    const pcRows = sortedConf.map((confluenceId) => ({ pattern_id: newPattern.id, confluence_id: confluenceId, user_id: userId }));
+    const ptRows = sortedTags.map((targetTagId) => ({ pattern_id: newPattern.id, target_tag_id: targetTagId, user_id: userId }));
+    const [pcResult, ptResult] = await Promise.all([
+      pcRows.length ? supabaseClient.from("pattern_confluences").insert(pcRows) : Promise.resolve({ error: null }),
+      ptRows.length ? supabaseClient.from("pattern_target_tags").insert(ptRows) : Promise.resolve({ error: null }),
+    ]);
+    if (pcResult.error || ptResult.error) {
+      // Don't leave a "naked" pattern behind with no confluences/targets linked to it.
       await supabaseClient.from("patterns").delete().eq("id", newPattern.id);
       return;
     }
     setPatternsList((prev) => [...prev, newPattern]);
-    setPatternConfluenceLinks((prev) => [...prev, ...pcRows]);
+    if (pcRows.length) setPatternConfluenceLinks((prev) => [...prev, ...pcRows]);
+    if (ptRows.length) setPatternTargetTagLinks((prev) => [...prev, ...ptRows]);
   }
 
   async function updatePatternName(patternId, name) {
@@ -2006,6 +2028,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     if (error) { setPatternFormError("Couldn't delete that pattern."); return; }
     setPatternsList(patternsList.filter((p) => p.id !== id));
     setPatternConfluenceLinks(patternConfluenceLinks.filter((l) => l.pattern_id !== id));
+    setPatternTargetTagLinks(patternTargetTagLinks.filter((l) => l.pattern_id !== id));
   }
 
   // ---- Feedback ----
@@ -2135,14 +2158,17 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       }));
       const { data: insertedLinks, error: linkErr } = await supabaseClient.from("trade_confluences").insert(linkRows).select();
       if (!linkErr) setTradeConfluenceLinks([...tradeConfluenceLinks, ...insertedLinks]);
-      const distinctConfluenceIds = Array.from(new Set(tConfluenceEntries.map((e) => e.confluenceId)));
-      await ensurePatternForConfluences(distinctConfluenceIds);
     }
 
     if (tTargetTags.length) {
       const targetLinkRows = tTargetTags.map((targetTagId) => ({ trade_id: data.id, target_tag_id: targetTagId, user_id: userId }));
       const { data: insertedTargetLinks, error: targetLinkErr } = await supabaseClient.from("trade_target_tags").insert(targetLinkRows).select();
       if (!targetLinkErr) setTradeTargetTagLinks([...tradeTargetTagLinks, ...insertedTargetLinks]);
+    }
+
+    if (tConfluenceEntries.length || tTargetTags.length) {
+      const distinctConfluenceIds = Array.from(new Set(tConfluenceEntries.map((e) => e.confluenceId)));
+      await ensurePattern(distinctConfluenceIds, tTargetTags);
     }
 
     setSaveError(null);
@@ -2239,8 +2265,9 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     if (error) return;
     const nextLinks = [...tradeConfluenceLinks, data];
     setTradeConfluenceLinks(nextLinks);
-    const distinctIds = Array.from(new Set(nextLinks.filter((l) => l.trade_id === tradeId).map((l) => l.confluence_id)));
-    await ensurePatternForConfluences(distinctIds);
+    const distinctConfluenceIds = Array.from(new Set(nextLinks.filter((l) => l.trade_id === tradeId).map((l) => l.confluence_id)));
+    const distinctTargetTagIds = Array.from(new Set(tradeTargetTagLinks.filter((l) => l.trade_id === tradeId).map((l) => l.target_tag_id)));
+    await ensurePattern(distinctConfluenceIds, distinctTargetTagIds);
     setEditPickConfluenceId(""); setEditPickTimeframe("");
   }
 
@@ -2258,7 +2285,11 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     } else {
       const { data, error } = await supabaseClient.from("trade_target_tags").insert({ trade_id: tradeId, target_tag_id: targetTagId, user_id: userId }).select().single();
       if (error) return;
-      setTradeTargetTagLinks([...tradeTargetTagLinks, data]);
+      const nextLinks = [...tradeTargetTagLinks, data];
+      setTradeTargetTagLinks(nextLinks);
+      const distinctConfluenceIds = Array.from(new Set(tradeConfluenceLinks.filter((l) => l.trade_id === tradeId).map((l) => l.confluence_id)));
+      const distinctTargetTagIds = Array.from(new Set(nextLinks.filter((l) => l.trade_id === tradeId).map((l) => l.target_tag_id)));
+      await ensurePattern(distinctConfluenceIds, distinctTargetTagIds);
     }
   }
 
@@ -2394,41 +2425,51 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
 
   const confluenceNameById = Object.fromEntries(confluencesList.map((c) => [c.id, c.name]));
   const confluenceNameToPointsById = Object.fromEntries(confluencesList.map((c) => [c.id, c.points || 0]));
-  const tradeConfluenceMap = {}; // trade_id -> sorted, deduped confluence_id[]
-  tradeConfluenceLinks.forEach((l) => {
-    if (!tradeConfluenceMap[l.trade_id]) tradeConfluenceMap[l.trade_id] = [];
-    tradeConfluenceMap[l.trade_id].push(l.confluence_id);
-  });
-  // A trade can carry the same confluence twice (different timeframes) — for
-  // pattern matching, what matters is which confluences were present, not
-  // how many times each was tagged, so dedupe before comparing sets.
-  Object.keys(tradeConfluenceMap).forEach((k) => {
-    tradeConfluenceMap[k] = Array.from(new Set(tradeConfluenceMap[k])).sort();
-  });
-  const patternConfluenceMap = {}; // pattern_id -> sorted confluence_id[]
-  patternConfluenceLinks.forEach((l) => {
-    if (!patternConfluenceMap[l.pattern_id]) patternConfluenceMap[l.pattern_id] = [];
-    patternConfluenceMap[l.pattern_id].push(l.confluence_id);
-  });
-  Object.values(patternConfluenceMap).forEach((arr) => arr.sort());
+  const targetTagNameById = Object.fromEntries(targetTagsList.map((t) => [t.id, t.name]));
+  const targetTagValueById = Object.fromEntries(targetTagsList.map((t) => [t.id, t.value || 0]));
+
+  function buildIdMap(links, keyField, valueField) {
+    const map = {};
+    links.forEach((l) => {
+      if (!map[l[keyField]]) map[l[keyField]] = [];
+      map[l[keyField]].push(l[valueField]);
+    });
+    Object.keys(map).forEach((k) => { map[k] = Array.from(new Set(map[k])).sort(); });
+    return map;
+  }
+  // Trades can carry the same confluence twice (different timeframes) — for
+  // pattern matching, what matters is which confluences/targets were
+  // present, not how many times each was tagged, so dedupe before comparing.
+  const tradeConfluenceMap = buildIdMap(tradeConfluenceLinks, "trade_id", "confluence_id");
+  const tradeTargetTagMap = buildIdMap(tradeTargetTagLinks, "trade_id", "target_tag_id");
+  const patternConfluenceMap = buildIdMap(patternConfluenceLinks, "pattern_id", "confluence_id");
+  const patternTargetTagMap = buildIdMap(patternTargetTagLinks, "pattern_id", "target_tag_id");
   function sameIds(a, b) {
     return a.length === b.length && a.every((v, i) => v === b[i]);
   }
   const patternPerf = patternsList
-    // A pattern with zero linked confluences is a "naked" leftover from a
-    // failed insert, not a real pattern — never show it or match trades to it.
-    .filter((p) => (patternConfluenceMap[p.id] || []).length > 0)
+    // A pattern with zero linked confluences AND zero linked target tags is
+    // a "naked" leftover from a failed insert, not a real pattern — never
+    // show it or match trades to it. A pattern built from only one of the
+    // two (e.g. target tags with no confluences) is legitimate.
+    .filter((p) => (patternConfluenceMap[p.id] || []).length > 0 || (patternTargetTagMap[p.id] || []).length > 0)
     .map((p) => {
       const confIds = patternConfluenceMap[p.id] || [];
-      const label = confIds.map((id) => confluenceNameById[id] || "?").join(" + ");
-      const taggedTrades = tradingOnly.filter((t) => sameIds(tradeConfluenceMap[t.id] || [], confIds));
+      const tagIds = patternTargetTagMap[p.id] || [];
+      const confLabel = confIds.map((id) => confluenceNameById[id] || "?").join(" + ");
+      const tagLabel = tagIds.map((id) => targetTagNameById[id] || "?").join(" + ");
+      const label = confLabel && tagLabel ? `${confLabel} · ${tagLabel}` : (confLabel || tagLabel);
+      const taggedTrades = tradingOnly.filter((t) =>
+        sameIds(tradeConfluenceMap[t.id] || [], confIds) && sameIds(tradeTargetTagMap[t.id] || [], tagIds)
+      );
       const count = taggedTrades.length;
       const total = taggedTrades.reduce((s, t) => s + t.pnl, 0);
       const wins = taggedTrades.filter((t) => t.pnl > 0).length;
       const winRateP = count ? Math.round((wins / count) * 100) : 0;
       const biggestWin = count ? Math.max(...taggedTrades.map((t) => t.pnl)) : null;
       const biggestLoss = count ? Math.min(...taggedTrades.map((t) => t.pnl)) : null;
-      const pointsTotal = confIds.reduce((s, id) => s + (Number(confluenceNameToPointsById[id]) || 0), 0);
+      const pointsTotal = confIds.reduce((s, id) => s + (Number(confluenceNameToPointsById[id]) || 0), 0)
+        + tagIds.reduce((s, id) => s + (Number(targetTagValueById[id]) || 0), 0);
       const autoGrade = computeAutoGrade(pointsTotal, targets.gradeThresholds);
       return { id: p.id, name: p.name || null, label, grade: p.grade, count, total, winRateP, biggestWin, biggestLoss, pointsTotal, autoGrade };
     });
@@ -3262,7 +3303,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               </div>
             )}
             {patternsList.length === 0 ? (
-              <EmptyState text="Patterns are built automatically: tag a trade with a combination of confluences (in Add Trade), and that combination shows up here to grade and track." />
+              <EmptyState text="Patterns are built automatically: tag a trade with a combination of confluences and/or targets (in Add Trade), and that combination shows up here to grade and track." />
             ) : (
               <div style={{ display: "grid", gap: 10, marginBottom: 28 }}>
                 {patternPerf.map((p) => (

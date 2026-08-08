@@ -528,6 +528,35 @@ drop policy if exists "delete own pattern confluences" on public.pattern_conflue
 create policy "delete own pattern confluences" on public.pattern_confluences
   for delete using (auth.uid() = user_id);
 
+-- =========================================================================
+-- pattern_target_tags — many-to-many: which target tags make up a pattern,
+-- alongside pattern_confluences. Target tags are now also part of what
+-- identifies a pattern (not just confluences) — a pattern is the exact
+-- combination of BOTH the confluences AND the target tags tagged together
+-- on a trade.
+-- =========================================================================
+create table if not exists public.pattern_target_tags (
+  pattern_id uuid not null references public.patterns (id) on delete cascade,
+  target_tag_id uuid not null references public.target_tags (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  primary key (pattern_id, target_tag_id)
+);
+
+create index if not exists pattern_target_tags_pattern_idx on public.pattern_target_tags (pattern_id);
+create index if not exists pattern_target_tags_tag_idx on public.pattern_target_tags (target_tag_id);
+
+alter table public.pattern_target_tags enable row level security;
+
+drop policy if exists "select own pattern target tags" on public.pattern_target_tags;
+create policy "select own pattern target tags" on public.pattern_target_tags
+  for select using (auth.uid() = user_id);
+drop policy if exists "insert own pattern target tags" on public.pattern_target_tags;
+create policy "insert own pattern target tags" on public.pattern_target_tags
+  for insert with check (auth.uid() = user_id);
+drop policy if exists "delete own pattern target tags" on public.pattern_target_tags;
+create policy "delete own pattern target tags" on public.pattern_target_tags
+  for delete using (auth.uid() = user_id);
+
 -- One-time cleanup: rows left orphaned by past runs of the unconditional
 -- drop this file used to have (dropping `patterns` with CASCADE only drops
 -- the FK *constraint* on pattern_confluences, not the table itself — so old
@@ -535,14 +564,18 @@ create policy "delete own pattern confluences" on public.pattern_confluences
 -- leave here permanently; it's a no-op once cleaned up.
 delete from public.pattern_confluences pc
 where not exists (select 1 from public.patterns p where p.id = pc.pattern_id);
+delete from public.pattern_target_tags ptt
+where not exists (select 1 from public.patterns p where p.id = ptt.pattern_id);
 
--- One-time cleanup: "naked" patterns with zero linked confluences (left
--- behind if the pattern_confluences insert failed right after the pattern
--- row was created, before the app started rolling that back itself). These
--- show up as an unlabeled "—" pattern that wrongly matches any trade with
--- no confluences tagged at all. Safe to leave here permanently.
+-- One-time cleanup: "naked" patterns with zero linked confluences AND zero
+-- linked target tags (left behind if the link-row insert failed right
+-- after the pattern row was created, before the app started rolling that
+-- back itself). A pattern built from target tags only is legitimate (has
+-- confluence links but not target tag links, or vice versa) — only a
+-- pattern with NEITHER is naked. Safe to leave here permanently.
 delete from public.patterns p
-where not exists (select 1 from public.pattern_confluences pc where pc.pattern_id = p.id);
+where not exists (select 1 from public.pattern_confluences pc where pc.pattern_id = p.id)
+  and not exists (select 1 from public.pattern_target_tags ptt where ptt.pattern_id = p.id);
 
 -- =========================================================================
 -- trades.duration migrates from whole minutes to whole seconds, so the app
@@ -980,15 +1013,23 @@ create policy "update own target tags" on public.target_tags
   for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- =========================================================================
--- REPAIR: rebuild any patterns wiped out by the now-removed guarded-drop
--- bug above (see the NOTE near the top of the file, before `confluences`).
--- For every distinct set of confluences actually tagged together on a
--- trade, re-create the matching pattern/pattern_confluences rows if they
--- don't already exist. Safe to run every time — it only ever fills in
--- gaps, and does nothing once patterns are consistent with trade tagging.
--- Custom names and manually-set grades on any patterns that were dropped
+-- REPAIR / BACKFILL: rebuild any patterns wiped out by the now-removed
+-- guarded-drop bug above (see the NOTE near the top of the file, before
+-- `confluences`), AND backfill pattern_target_tags for the "target tags
+-- are also part of a pattern's identity" change below — a pattern is now
+-- the exact combination of BOTH the confluences AND the target tags tagged
+-- together on a trade, not confluences alone.
+--
+-- For every trade with at least one confluence or target tag, re-create
+-- the matching pattern/pattern_confluences/pattern_target_tags rows if a
+-- pattern with that exact (confluence set, target tag set) doesn't already
+-- exist. Safe to run every time — it only ever fills in gaps, and does
+-- nothing once patterns are consistent with trade tagging. Custom names
+-- and manually-set grades on any patterns that were dropped by the old bug
 -- cannot be recovered (that data lived only in the dropped rows) and will
--- come back ungraded/unnamed.
+-- come back ungraded/unnamed. Pre-existing confluence-only patterns are
+-- untouched — trades whose tagging now needs a target tag added to match
+-- just get a new, more specific pattern alongside the old one.
 -- =========================================================================
 do $$
 declare
@@ -996,23 +1037,41 @@ declare
   new_pattern_id uuid;
 begin
   for combo in
-    select tc.user_id, array_agg(distinct tc.confluence_id order by tc.confluence_id) as confluence_ids
-    from public.trade_confluences tc
-    group by tc.trade_id, tc.user_id
+    select
+      t.id as trade_id,
+      t.user_id,
+      coalesce(
+        (select array_agg(distinct tc.confluence_id order by tc.confluence_id) from public.trade_confluences tc where tc.trade_id = t.id),
+        '{}'::uuid[]
+      ) as confluence_ids,
+      coalesce(
+        (select array_agg(distinct ttt.target_tag_id order by ttt.target_tag_id) from public.trade_target_tags ttt where ttt.trade_id = t.id),
+        '{}'::uuid[]
+      ) as target_tag_ids
+    from public.trades t
+    where exists (select 1 from public.trade_confluences tc2 where tc2.trade_id = t.id)
+       or exists (select 1 from public.trade_target_tags ttt2 where ttt2.trade_id = t.id)
   loop
     if not exists (
       select 1 from (
-        select pc.pattern_id, array_agg(pc.confluence_id order by pc.confluence_id) as ids
-        from public.pattern_confluences pc
-        join public.patterns p on p.id = pc.pattern_id
+        select
+          p.id,
+          coalesce((select array_agg(pc.confluence_id order by pc.confluence_id) from public.pattern_confluences pc where pc.pattern_id = p.id), '{}'::uuid[]) as cids,
+          coalesce((select array_agg(ptt.target_tag_id order by ptt.target_tag_id) from public.pattern_target_tags ptt where ptt.pattern_id = p.id), '{}'::uuid[]) as tids
+        from public.patterns p
         where p.user_id = combo.user_id
-        group by pc.pattern_id
       ) existing
-      where existing.ids = combo.confluence_ids
+      where existing.cids = combo.confluence_ids and existing.tids = combo.target_tag_ids
     ) then
       insert into public.patterns (user_id) values (combo.user_id) returning id into new_pattern_id;
-      insert into public.pattern_confluences (pattern_id, confluence_id, user_id)
-      select new_pattern_id, cid, combo.user_id from unnest(combo.confluence_ids) as cid;
+      if array_length(combo.confluence_ids, 1) is not null then
+        insert into public.pattern_confluences (pattern_id, confluence_id, user_id)
+        select new_pattern_id, cid, combo.user_id from unnest(combo.confluence_ids) as cid;
+      end if;
+      if array_length(combo.target_tag_ids, 1) is not null then
+        insert into public.pattern_target_tags (pattern_id, target_tag_id, user_id)
+        select new_pattern_id, tid, combo.user_id from unnest(combo.target_tag_ids) as tid;
+      end if;
     end if;
   end loop;
 end $$;
