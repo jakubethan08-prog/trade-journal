@@ -905,3 +905,73 @@ create policy "delete group background images" on storage.objects
     bucket_id = 'group-backgrounds'
     and public.is_group_member(((storage.foldername(name))[1])::uuid, auth.uid())
   );
+
+-- =========================================================================
+-- feedback — a simple write-then-read-your-own-submissions form
+-- =========================================================================
+create table if not exists public.feedback (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  message text not null,
+  created_at timestamptz not null default now()
+);
+
+alter table public.feedback enable row level security;
+drop policy if exists "select own feedback" on public.feedback;
+create policy "select own feedback" on public.feedback
+  for select using (auth.uid() = user_id);
+drop policy if exists "insert own feedback" on public.feedback;
+create policy "insert own feedback" on public.feedback
+  for insert with check (auth.uid() = user_id);
+
+-- =========================================================================
+-- Global leaderboard — opt-in. get_leaderboard() is SECURITY DEFINER so it
+-- can return an AGGREGATE (total P&L, win rate) for opted-in users without
+-- granting any client-side read access to other users' raw trades.
+-- =========================================================================
+alter table public.profiles add column if not exists leaderboard_opt_in boolean not null default false;
+grant update (leaderboard_opt_in) on public.profiles to authenticated;
+
+create or replace function public.get_leaderboard()
+returns table (user_id uuid, display_name text, total_pnl numeric, win_rate int, trade_count int)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select
+    p.id as user_id,
+    coalesce(p.display_name, p.email, 'Trader') as display_name,
+    coalesce(sum(t.pnl) filter (where t.entry_type <> 'payout'), 0) as total_pnl,
+    case when count(t.id) filter (where t.entry_type <> 'payout') > 0
+      then round(100.0 * count(t.id) filter (where t.entry_type <> 'payout' and t.pnl > 0) / count(t.id) filter (where t.entry_type <> 'payout'))
+      else 0
+    end::int as win_rate,
+    count(t.id) filter (where t.entry_type <> 'payout')::int as trade_count
+  from public.profiles p
+  left join public.trades t on t.user_id = p.id
+  where p.leaderboard_opt_in = true
+  group by p.id, p.display_name, p.email
+  order by total_pnl desc;
+$$;
+grant execute on function public.get_leaderboard() to authenticated;
+
+-- =========================================================================
+-- Custom automatic grading — assign each confluence a point value, define
+-- what point total each grade requires, and patterns can be auto-graded
+-- from the sum of their confluences' points instead of graded by hand.
+-- =========================================================================
+alter table public.confluences add column if not exists points numeric not null default 0;
+
+drop policy if exists "update own confluences" on public.confluences;
+create policy "update own confluences" on public.confluences
+  for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- One row per user already (targets) — jsonb map like {"A++": 18, "A+": 15, ...}
+alter table public.targets add column if not exists grade_thresholds jsonb not null default '{}'::jsonb;
+
+-- =========================================================================
+-- Pattern naming — an optional custom name, shown instead of the
+-- auto-generated "confluence + confluence" combination label.
+-- =========================================================================
+alter table public.patterns add column if not exists name text;

@@ -104,6 +104,15 @@ function gradeColor(grade) {
   if (rank >= 3) return "#16A34A";       // A- through A++
   return "#2563EB";                       // B- through B+
 }
+function computeAutoGrade(points, thresholds) {
+  if (!thresholds || typeof thresholds !== "object") return null;
+  for (let i = GRADES.length - 1; i >= 0; i--) {
+    const g = GRADES[i];
+    const req = thresholds[g];
+    if (req !== undefined && req !== null && req !== "" && points >= Number(req)) return g;
+  }
+  return null;
+}
 function pnlColor(t) {
   if (t.entryType === "payout") return COLORS.payout;
   return t.pnl >= 0 ? COLORS.win : COLORS.loss;
@@ -271,6 +280,7 @@ function rowToTargets(row) {
       axisColor: "",
       calWinColor: "#16A34A", calLossColor: "#E23D45", calPayoutColor: "#0EA5E9",
       selectedTabColor: "", addTradeColor: "", welcomeBannerColor: "",
+      gradeThresholds: {},
     };
   }
   return {
@@ -287,6 +297,7 @@ function rowToTargets(row) {
     selectedTabColor: row.selected_tab_color || "",
     addTradeColor: row.add_trade_color || "",
     welcomeBannerColor: row.welcome_banner_color || "",
+    gradeThresholds: row.grade_thresholds && typeof row.grade_thresholds === "object" ? row.grade_thresholds : {},
   };
 }
 function targetsToRow(t, userId) {
@@ -305,6 +316,7 @@ function targetsToRow(t, userId) {
     selected_tab_color: t.selectedTabColor || null,
     add_trade_color: t.addTradeColor || null,
     welcome_banner_color: t.welcomeBannerColor || null,
+    grade_thresholds: t.gradeThresholds && typeof t.gradeThresholds === "object" ? t.gradeThresholds : {},
   };
 }
 function rowToMedia(row) {
@@ -482,6 +494,17 @@ function IconFriends({ active }) {
       <circle cx="16.5" cy="9" r="3" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2"/>
       <path d="M2.5 20C2.5 16.5 5 14 8.5 14C11 14 13 15.2 14 17" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2" strokeLinecap="round"/>
       <path d="M13 14.5C13.9 14.2 15 14 15.7 14C18.5 14 20.5 16 21 19" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2" strokeLinecap="round"/>
+    </svg>
+  );
+}
+function IconLeaderboard({ active }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+      <path d="M8 21H16" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2" strokeLinecap="round"/>
+      <path d="M12 17V21" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2" strokeLinecap="round"/>
+      <path d="M6 4H18V9C18 12.3137 15.3137 15 12 15C8.68629 15 6 12.3137 6 9V4Z" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2"/>
+      <path d="M6 6H3.5C3.5 8.5 4.5 10 6 10.5" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2" strokeLinecap="round"/>
+      <path d="M18 6H20.5C20.5 8.5 19.5 10 18 10.5" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2" strokeLinecap="round"/>
     </svg>
   );
 }
@@ -1245,9 +1268,23 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const [newTargetTagName, setNewTargetTagName] = useState("");
   const [tTargetTags, setTTargetTags] = useState([]);
 
+  // ---- Feedback: a simple write-then-read-your-own-submissions form ----
+  const [feedbackMessage, setFeedbackMessage] = useState("");
+  const [feedbackBusy, setFeedbackBusy] = useState(false);
+  const [feedbackError, setFeedbackError] = useState(null);
+  const [feedbackSentMsg, setFeedbackSentMsg] = useState(false);
+  const [pastFeedback, setPastFeedback] = useState([]);
+
+  // ---- Global leaderboard: opt-in only, aggregates via get_leaderboard() RPC ----
+  const [leaderboardOptIn, setLeaderboardOptIn] = useState(false);
+  const [leaderboardOptInBusy, setLeaderboardOptInBusy] = useState(false);
+  const [leaderboardList, setLeaderboardList] = useState([]);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+  const [leaderboardError, setLeaderboardError] = useState(null);
+
   // ---- Load this user's data from Supabase on mount ----
   async function reloadAllData() {
-    const [tradesRes, entriesRes, targetsRes, mediaRes, confluencesRes, tradeConfluencesRes, patternsRes, patternConfluencesRes, targetTagsRes, tradeTargetTagsRes] = await Promise.all([
+    const [tradesRes, entriesRes, targetsRes, mediaRes, confluencesRes, tradeConfluencesRes, patternsRes, patternConfluencesRes, targetTagsRes, tradeTargetTagsRes, ownProfileRes, feedbackRes] = await Promise.all([
       supabaseClient.from("trades").select("*").eq("user_id", userId).order("date", { ascending: false }),
       supabaseClient.from("journal_entries").select("*").order("date", { ascending: false }),
       supabaseClient.from("targets").select("*").eq("user_id", userId).maybeSingle(),
@@ -1258,6 +1295,8 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       supabaseClient.from("pattern_confluences").select("*"),
       supabaseClient.from("target_tags").select("*").order("name", { ascending: true }),
       supabaseClient.from("trade_target_tags").select("*"),
+      supabaseClient.from("profiles").select("leaderboard_opt_in").eq("id", userId).maybeSingle(),
+      supabaseClient.from("feedback").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
     ]);
     if (tradesRes.error) throw tradesRes.error;
     if (entriesRes.error) throw entriesRes.error;
@@ -1290,6 +1329,8 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     setPatternConfluenceLinks(patternConfluencesRes.data || []);
     setTargetTagsList(targetTagsRes.data || []);
     setTradeTargetTagLinks(tradeTargetTagsRes.data || []);
+    setLeaderboardOptIn(!!(ownProfileRes.data && ownProfileRes.data.leaderboard_opt_in));
+    setPastFeedback(feedbackRes.data || []);
   }
 
   useEffect(() => {
@@ -1849,6 +1890,13 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     setTConfluenceEntries(tConfluenceEntries.filter((e) => e.confluenceId !== id));
   }
 
+  async function updateConfluencePoints(id, points) {
+    const n = points === "" || points === null || points === undefined ? 0 : Number(points);
+    setConfluencesList((prev) => prev.map((c) => (c.id === id ? { ...c, points: n } : c)));
+    const { error } = await supabaseClient.from("confluences").update({ points: n }).eq("id", id);
+    if (error) setPatternFormError("Couldn't save that confluence's points.");
+  }
+
   // A trade can carry the same confluence more than once (different
   // timeframes each time), so selections are an appendable list of entries
   // rather than a toggled set of ids.
@@ -1929,12 +1977,60 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     setPatternsList(patternsList.map((p) => (p.id === patternId ? { ...p, grade: grade || null } : p)));
   }
 
+  async function updatePatternName(patternId, name) {
+    const trimmed = name.trim();
+    const { error } = await supabaseClient.from("patterns").update({ name: trimmed || null }).eq("id", patternId);
+    if (error) { setPatternFormError("Couldn't update that pattern's name."); return; }
+    setPatternsList(patternsList.map((p) => (p.id === patternId ? { ...p, name: trimmed || null } : p)));
+  }
+
   async function deletePatternRow(id) {
     const { error } = await supabaseClient.from("patterns").delete().eq("id", id);
     if (error) { setPatternFormError("Couldn't delete that pattern."); return; }
     setPatternsList(patternsList.filter((p) => p.id !== id));
     setPatternConfluenceLinks(patternConfluenceLinks.filter((l) => l.pattern_id !== id));
   }
+
+  // ---- Feedback ----
+  async function submitFeedback(e) {
+    e.preventDefault();
+    setFeedbackError(null);
+    setFeedbackSentMsg(false);
+    const message = feedbackMessage.trim();
+    if (!message) { setFeedbackError("Enter a message before sending."); return; }
+    setFeedbackBusy(true);
+    const { data, error } = await supabaseClient.from("feedback").insert({ user_id: userId, message }).select().single();
+    setFeedbackBusy(false);
+    if (error) { setFeedbackError("Couldn't send your feedback — try again."); return; }
+    setPastFeedback((prev) => [data, ...prev]);
+    setFeedbackMessage("");
+    setFeedbackSentMsg(true);
+  }
+
+  // ---- Global leaderboard ----
+  async function toggleLeaderboardOptIn() {
+    const next = !leaderboardOptIn;
+    setLeaderboardOptInBusy(true);
+    setLeaderboardOptIn(next);
+    const { error } = await supabaseClient.from("profiles").update({ leaderboard_opt_in: next }).eq("id", userId);
+    setLeaderboardOptInBusy(false);
+    if (error) { setLeaderboardOptIn(!next); setLeaderboardError("Couldn't update your leaderboard setting."); return; }
+    setLeaderboardError(null);
+    if (next) loadLeaderboard();
+  }
+
+  async function loadLeaderboard() {
+    setLeaderboardLoading(true);
+    setLeaderboardError(null);
+    const { data, error } = await supabaseClient.rpc("get_leaderboard");
+    setLeaderboardLoading(false);
+    if (error) { setLeaderboardError("Couldn't load the leaderboard — try again."); return; }
+    setLeaderboardList(data || []);
+  }
+
+  useEffect(() => {
+    if (tab === "leaderboard") loadLeaderboard();
+  }, [tab]);
 
   const acceptedFriends = friendships.filter((f) => f.status === "accepted");
   const friendshipsKey = friendships.map((f) => `${f.id}:${f.status}`).join(",");
@@ -2280,6 +2376,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const worstPattern = patternStats[patternStats.length - 1];
 
   const confluenceNameById = Object.fromEntries(confluencesList.map((c) => [c.id, c.name]));
+  const confluenceNameToPointsById = Object.fromEntries(confluencesList.map((c) => [c.id, c.points || 0]));
   const tradeConfluenceMap = {}; // trade_id -> sorted, deduped confluence_id[]
   tradeConfluenceLinks.forEach((l) => {
     if (!tradeConfluenceMap[l.trade_id]) tradeConfluenceMap[l.trade_id] = [];
@@ -2314,7 +2411,9 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       const winRateP = count ? Math.round((wins / count) * 100) : 0;
       const biggestWin = count ? Math.max(...taggedTrades.map((t) => t.pnl)) : null;
       const biggestLoss = count ? Math.min(...taggedTrades.map((t) => t.pnl)) : null;
-      return { id: p.id, label, grade: p.grade, count, total, winRateP, biggestWin, biggestLoss };
+      const pointsTotal = confIds.reduce((s, id) => s + (Number(confluenceNameToPointsById[id]) || 0), 0);
+      const autoGrade = computeAutoGrade(pointsTotal, targets.gradeThresholds);
+      return { id: p.id, name: p.name || null, label, grade: p.grade, count, total, winRateP, biggestWin, biggestLoss, pointsTotal, autoGrade };
     });
   const ratedPatternPerf = patternPerf.filter((p) => p.count > 0);
   const bestConfluencePattern = ratedPatternPerf.length
@@ -2443,6 +2542,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     { key: "patterns", label: "Patterns", Icon: IconPatterns },
     { key: "journal", label: "Journal", Icon: IconJournal },
     { key: "friends", label: "Friends", Icon: IconFriends },
+    { key: "leaderboard", label: "Leaderboard", Icon: IconLeaderboard },
   ];
 
   return (
@@ -2500,6 +2600,18 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           {theme === "light" ? "Dark mode" : "Light mode"}
         </button>
         <button
+          onClick={() => setTab("feedback")}
+          style={{
+            display: "flex", alignItems: "center", gap: 8,
+            background: tab === "feedback" ? (targets.selectedTabColor || COLORS.sidebarActive) : "rgba(255,255,255,0.06)",
+            color: tab === "feedback" ? "#fff" : "#C7CAD6",
+            border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10,
+            padding: "9px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "left",
+          }}
+        >
+          <span style={{ fontSize: 14 }}>💬</span> Feedback
+        </button>
+        <button
           onClick={() => setTab("settings")}
           style={{
             display: "flex", alignItems: "center", gap: 8,
@@ -2529,10 +2641,10 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
         <header style={{ marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
           <div>
             <h1 style={{ fontSize: 24, margin: 0, fontWeight: 700, letterSpacing: "-0.01em" }}>
-              {tab === "dashboard" ? "Dashboard" : tab === "trades" ? "Trades" : tab === "calendar" ? "Performance" : tab === "patterns" ? "Patterns" : tab === "friends" ? "Friends" : tab === "settings" ? "Settings" : "Journal"}
+              {tab === "dashboard" ? "Dashboard" : tab === "trades" ? "Trades" : tab === "calendar" ? "Performance" : tab === "patterns" ? "Patterns" : tab === "friends" ? "Friends" : tab === "leaderboard" ? "Leaderboard" : tab === "feedback" ? "Feedback" : tab === "settings" ? "Settings" : "Journal"}
             </h1>
             <div style={{ fontSize: 13, color: COLORS.textMuted, marginTop: 2 }}>
-              {tab === "dashboard" ? "Your performance and your friends'" : tab === "trades" ? "Log and review every trade" : tab === "calendar" ? "Account growth and daily/weekly P&L" : tab === "patterns" ? "How you perform by how you felt" : tab === "friends" ? "See each other's trades" : tab === "settings" ? "Targets and appearance" : "Track how you felt and why"}
+              {tab === "dashboard" ? "Your performance and your friends'" : tab === "trades" ? "Log and review every trade" : tab === "calendar" ? "Account growth and daily/weekly P&L" : tab === "patterns" ? "How you perform by how you felt" : tab === "friends" ? "See each other's trades" : tab === "leaderboard" ? "See how you rank, opt-in only" : tab === "feedback" ? "Tell us what to build next" : tab === "settings" ? "Targets and appearance" : "Track how you felt and why"}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
@@ -2574,7 +2686,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
             </div>
             <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, marginBottom: 24 }}>
               <StatCard label="Best state of mind" value={bestPattern ? bestPattern.label : "—"} color={bestPattern ? COLORS.win : undefined} />
-              <StatCard label="Best pattern" value={bestConfluencePattern ? bestConfluencePattern.label : "—"} color={bestConfluencePattern ? COLORS.win : undefined} />
+              <StatCard label="Best pattern" value={bestConfluencePattern ? (bestConfluencePattern.name || bestConfluencePattern.label) : "—"} color={bestConfluencePattern ? COLORS.win : undefined} />
             </div>
 
             <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Friends</div>
@@ -3038,11 +3150,13 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                       const calLoss = targets.calLossColor || COLORS.loss;
                       const cellColor = isWin ? calWin : calLoss;
                       const cellSoft = isWin ? calWin + "1E" : calLoss + "1E";
+                      const hasPayout = !!(d && d.payoutTotal);
                       return (
                         <div
                           key={ci}
                           onClick={() => hasTrades && setSelectedDay(cell.dateStr)}
                           style={{
+                            position: "relative",
                             borderRadius: 10, minHeight: 74, padding: "8px 10px",
                             background: hasTrades ? cellSoft : COLORS.subtleBg,
                             border: `1.5px solid ${hasTrades ? cellColor : COLORS.border}`,
@@ -3051,6 +3165,16 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                             transition: "transform 0.1s ease",
                           }}
                         >
+                          {hasPayout && (
+                            <div
+                              title={`Payout: ${fmtMoney(d.payoutTotal)}`}
+                              style={{
+                                position: "absolute", top: 6, right: 6, width: 8, height: 8, borderRadius: "50%",
+                                background: targets.calPayoutColor || COLORS.payout,
+                                boxShadow: `0 0 0 2px ${COLORS.card}`,
+                              }}
+                            />
+                          )}
                           <div style={{ fontSize: 13, color: hasTrades ? cellColor : COLORS.textMuted, fontWeight: 600 }}>
                             {cell.day}
                           </div>
@@ -3125,15 +3249,49 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
             {confluencesList.length === 0 ? (
               <EmptyState text="No confluences yet. Add some above (e.g. IFVG, HTF FVG, CISD), then select them on a trade in Add Trade." />
             ) : (
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 28 }}>
-                {confluencesList.map((c) => (
-                  <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: COLORS.subtleBg, border: `1.5px solid ${COLORS.border}`, borderRadius: 20, padding: "6px 8px 6px 14px", fontSize: 12.5, fontWeight: 600, color: COLORS.text }}>
-                    {c.name}
-                    <button onClick={() => deleteConfluence(c.id)} style={{ ...deleteBtnStyle_(), padding: 0, fontSize: 12 }} aria-label={`Delete ${c.name}`}>✕</button>
-                  </span>
-                ))}
-              </div>
+              <>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+                  {confluencesList.map((c) => (
+                    <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: COLORS.subtleBg, border: `1.5px solid ${COLORS.border}`, borderRadius: 20, padding: "6px 8px 6px 14px", fontSize: 12.5, fontWeight: 600, color: COLORS.text }}>
+                      {c.name}
+                      <input
+                        type="number"
+                        step="0.5"
+                        value={c.points === 0 || c.points ? c.points : 0}
+                        onChange={(e) => updateConfluencePoints(c.id, e.target.value)}
+                        title="Points toward auto-grading"
+                        style={{ width: 44, fontSize: 12, padding: "2px 4px", borderRadius: 8, border: `1px solid ${COLORS.border}`, background: COLORS.card, color: COLORS.text }}
+                      />
+                      <button onClick={() => deleteConfluence(c.id)} style={{ ...deleteBtnStyle_(), padding: 0, fontSize: 12 }} aria-label={`Delete ${c.name}`}>✕</button>
+                    </span>
+                  ))}
+                </div>
+                <div style={{ fontSize: 11.5, color: COLORS.textMuted, marginBottom: 28 }}>
+                  Set a point value per confluence, then define grade thresholds below to auto-grade patterns.
+                </div>
+              </>
             )}
+
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Grade thresholds</div>
+            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 28, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+              {GRADES.slice().reverse().map((g) => (
+                <Field key={g} label={g} style={{ width: 84 }}>
+                  <input
+                    type="number"
+                    step="0.5"
+                    value={targets.gradeThresholds && targets.gradeThresholds[g] !== undefined ? targets.gradeThresholds[g] : ""}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      const next = { ...(targets.gradeThresholds || {}) };
+                      if (v === "") delete next[g]; else next[g] = Number(v);
+                      updateTargets({ gradeThresholds: next });
+                    }}
+                    placeholder="pts"
+                    style={inputStyle_()}
+                  />
+                </Field>
+              ))}
+            </div>
 
             <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Targets</div>
             <form onSubmit={addTargetTag} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
@@ -3163,8 +3321,14 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               <div style={{ display: "grid", gap: 10, marginBottom: 28 }}>
                 {patternPerf.map((p) => (
                   <div key={p.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 10, flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 14, fontWeight: 700 }}>{p.label}</span>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, gap: 10, flexWrap: "wrap" }}>
+                      <input
+                        type="text"
+                        defaultValue={p.name || ""}
+                        placeholder="Name this pattern (optional)"
+                        onBlur={(e) => { if (e.target.value.trim() !== (p.name || "")) updatePatternName(p.id, e.target.value); }}
+                        style={{ ...inputStyle_(), width: "auto", flex: "1 1 200px", fontSize: 14, fontWeight: 700, border: "none", background: "transparent", padding: "2px 0" }}
+                      />
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <select value={p.grade || ""} onChange={(e) => updatePatternGrade(p.id, e.target.value)} style={{ ...inputStyle_(), width: "auto", display: "inline-block" }}>
                           <option value="">Ungraded</option>
@@ -3172,6 +3336,17 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                         </select>
                         <button onClick={() => deletePatternRow(p.id)} style={deleteBtnStyle_()} aria-label="Delete pattern">✕</button>
                       </div>
+                    </div>
+                    <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span>{p.label}</span>
+                      {p.autoGrade && (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          · Auto-grade ({p.pointsTotal} pts): <b style={{ color: gradeColor(p.autoGrade) || COLORS.text }}>{p.autoGrade}</b>
+                          {p.grade !== p.autoGrade && (
+                            <button onClick={() => updatePatternGrade(p.id, p.autoGrade)} style={{ ...ghostBtnStyle_(), padding: "2px 8px", fontSize: 11 }}>Use</button>
+                          )}
+                        </span>
+                      )}
                     </div>
                     {p.count === 0 ? (
                       <div style={{ fontSize: 12.5, color: COLORS.textMuted }}>No trades tagged with this exact combination yet.</div>
@@ -3443,6 +3618,100 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
             ) : (
               <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 18, boxShadow: "0 1px 2px rgba(23,21,51,0.04)", maxWidth: 420, display: "flex", flexDirection: "column", gap: 16 }}>
                 <TargetsPanel targets={targets} updateTargets={updateTargets} profitTargetHit={profitTargetHit} maxLossHit={maxLossHit} />
+              </div>
+            )}
+          </>
+        ) : tab === "leaderboard" ? (
+          <>
+            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Appear on the global leaderboard</div>
+                <div style={{ fontSize: 12, color: COLORS.textMuted, maxWidth: 480 }}>
+                  Opt-in only — your total P&L, win rate, and trade count become visible to everyone. Your individual trades are never shown.
+                </div>
+              </div>
+              <button
+                onClick={toggleLeaderboardOptIn}
+                disabled={leaderboardOptInBusy}
+                style={{
+                  ...(leaderboardOptIn ? primaryBtnStyle_() : ghostBtnStyle_()),
+                  opacity: leaderboardOptInBusy ? 0.7 : 1,
+                }}
+              >
+                {leaderboardOptIn ? "Opted in ✓" : "Opt in"}
+              </button>
+            </div>
+
+            {leaderboardError && (
+              <div style={{ color: COLORS.loss, fontSize: 12.5, marginBottom: 16 }}>{leaderboardError}</div>
+            )}
+
+            {leaderboardLoading ? (
+              <EmptyState text="Loading leaderboard…" />
+            ) : leaderboardList.length === 0 ? (
+              <EmptyState text="No one has opted in yet — be the first." />
+            ) : (
+              <div style={{ display: "grid", gap: 8 }}>
+                {leaderboardList.map((row, i) => {
+                  const isMe = row.user_id === userId;
+                  return (
+                    <div
+                      key={row.user_id}
+                      style={{
+                        background: isMe ? (targets.selectedTabColor || COLORS.accent) + "1A" : COLORS.card,
+                        border: `1.5px solid ${isMe ? (targets.selectedTabColor || COLORS.accent) : COLORS.border}`,
+                        borderRadius: 14, padding: "14px 18px",
+                        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap",
+                        boxShadow: "0 1px 2px rgba(23,21,51,0.04)",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                        <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: COLORS.textMuted, width: 28 }}>#{i + 1}</span>
+                        <span style={{ fontSize: 14, fontWeight: 700 }}>{row.display_name}{isMe ? " (you)" : ""}</span>
+                      </div>
+                      <div className="mono" style={{ display: "flex", gap: 20, fontSize: 12.5, color: COLORS.textMuted, flexWrap: "wrap" }}>
+                        <span>Total P&L <span style={{ fontWeight: 700, color: row.total_pnl >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(row.total_pnl)}</span></span>
+                        <span>Win rate <span style={{ fontWeight: 700, color: COLORS.text }}>{row.win_rate}%</span></span>
+                        <span>{row.trade_count} trade{row.trade_count === 1 ? "" : "s"}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        ) : tab === "feedback" ? (
+          <>
+            <form onSubmit={submitFeedback} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+              <Field label="What should we build or fix next?">
+                <textarea
+                  value={feedbackMessage}
+                  onChange={(e) => { setFeedbackMessage(e.target.value); setFeedbackSentMsg(false); }}
+                  placeholder="Tell us what's working, what's not, or what you'd like to see…"
+                  rows={5}
+                  style={{ ...inputStyle_(), resize: "vertical", fontFamily: "inherit" }}
+                />
+              </Field>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <button type="submit" disabled={feedbackBusy} style={{ ...primaryBtnStyle_(), opacity: feedbackBusy ? 0.7 : 1 }}>
+                  {feedbackBusy ? "Sending…" : "Send feedback"}
+                </button>
+                {feedbackSentMsg && !feedbackError && <span style={{ fontSize: 12.5, color: COLORS.win }}>Thanks — got it!</span>}
+                {feedbackError && <span style={{ fontSize: 12.5, color: COLORS.loss }}>{feedbackError}</span>}
+              </div>
+            </form>
+
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Your past feedback</div>
+            {pastFeedback.length === 0 ? (
+              <EmptyState text="Nothing sent yet." />
+            ) : (
+              <div style={{ display: "grid", gap: 10 }}>
+                {pastFeedback.map((f) => (
+                  <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                    <div style={{ fontSize: 13.5, color: COLORS.text, marginBottom: 6, whiteSpace: "pre-wrap" }}>{f.message}</div>
+                    <div style={{ fontSize: 11.5, color: COLORS.textMuted }}>{new Date(f.created_at).toLocaleString()}</div>
+                  </div>
+                ))}
               </div>
             )}
           </>
@@ -3972,16 +4241,28 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                             const isWin = hasTrades && d.total >= 0;
                             const cellColor = isWin ? COLORS.win : COLORS.loss;
                             const cellSoft = isWin ? COLORS.win + "1E" : COLORS.loss + "1E";
+                            const hasPayout = !!(d && d.payoutTotal);
                             return (
                               <div
                                 key={ci}
                                 style={{
+                                  position: "relative",
                                   borderRadius: 10, minHeight: 58, padding: "6px 8px",
                                   background: hasTrades ? cellSoft : COLORS.subtleBg,
                                   border: `1.5px solid ${hasTrades ? cellColor : COLORS.border}`,
                                   display: "flex", flexDirection: "column", justifyContent: "space-between",
                                 }}
                               >
+                                {hasPayout && (
+                                  <div
+                                    title={`Payout: ${fmtMoney(d.payoutTotal)}`}
+                                    style={{
+                                      position: "absolute", top: 5, right: 5, width: 7, height: 7, borderRadius: "50%",
+                                      background: COLORS.payout,
+                                      boxShadow: `0 0 0 2px ${COLORS.card}`,
+                                    }}
+                                  />
+                                )}
                                 <div style={{ fontSize: 12, color: hasTrades ? cellColor : COLORS.textMuted, fontWeight: 600 }}>{cell.day}</div>
                                 {hasTrades && (
                                   <div className="mono" style={{ fontSize: 12.5, fontWeight: 700, color: cellColor }}>{fmtMoney(d.total)}</div>
