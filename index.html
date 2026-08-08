@@ -1278,6 +1278,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const [tradeConfluenceLinks, setTradeConfluenceLinks] = useState([]);
   const [newConfluenceName, setNewConfluenceName] = useState("");
   const [patternFormError, setPatternFormError] = useState(null);
+  const [expandedPatternId, setExpandedPatternId] = useState(null);
   const [tConfluenceEntries, setTConfluenceEntries] = useState([]); // [{ localId, confluenceId, timeframe }]
   const [pickConfluenceId, setPickConfluenceId] = useState("");
   const [pickTimeframe, setPickTimeframe] = useState("");
@@ -2269,15 +2270,16 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
 
   async function addConfluenceToTrade(tradeId, confluenceId, timeframe) {
     if (!confluenceId) return;
+    // Patterns are only ever created at Add Trade submission time (see
+    // addTrade) — adding a confluence to an already-saved trade here can
+    // still match an EXISTING pattern (patternPerf matches live off current
+    // tagging) but deliberately never creates a new one, so every pattern
+    // traces back to a single Add Trade combination.
     const { data, error } = await supabaseClient.from("trade_confluences").insert({
       trade_id: tradeId, confluence_id: confluenceId, user_id: userId, timeframe: timeframe || null,
     }).select().single();
     if (error) return;
-    const nextLinks = [...tradeConfluenceLinks, data];
-    setTradeConfluenceLinks(nextLinks);
-    const distinctConfluenceIds = Array.from(new Set(nextLinks.filter((l) => l.trade_id === tradeId).map((l) => l.confluence_id)));
-    const distinctTargetTagIds = Array.from(new Set(tradeTargetTagLinks.filter((l) => l.trade_id === tradeId).map((l) => l.target_tag_id)));
-    await ensurePattern(distinctConfluenceIds, distinctTargetTagIds);
+    setTradeConfluenceLinks([...tradeConfluenceLinks, data]);
     setEditPickConfluenceId(""); setEditPickTimeframe("");
   }
 
@@ -2293,13 +2295,11 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       if (error) return;
       setTradeTargetTagLinks(tradeTargetTagLinks.filter((l) => !(l.trade_id === tradeId && l.target_tag_id === targetTagId)));
     } else {
+      // Same as addConfluenceToTrade above — never creates a new pattern,
+      // only ever matches an existing one.
       const { data, error } = await supabaseClient.from("trade_target_tags").insert({ trade_id: tradeId, target_tag_id: targetTagId, user_id: userId }).select().single();
       if (error) return;
-      const nextLinks = [...tradeTargetTagLinks, data];
-      setTradeTargetTagLinks(nextLinks);
-      const distinctConfluenceIds = Array.from(new Set(tradeConfluenceLinks.filter((l) => l.trade_id === tradeId).map((l) => l.confluence_id)));
-      const distinctTargetTagIds = Array.from(new Set(nextLinks.filter((l) => l.trade_id === tradeId).map((l) => l.target_tag_id)));
-      await ensurePattern(distinctConfluenceIds, distinctTargetTagIds);
+      setTradeTargetTagLinks([...tradeTargetTagLinks, data]);
     }
   }
 
@@ -2481,7 +2481,8 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       const pointsTotal = confIds.reduce((s, id) => s + (Number(confluenceNameToPointsById[id]) || 0), 0)
         + tagIds.reduce((s, id) => s + (Number(targetTagValueById[id]) || 0), 0);
       const autoGrade = computeAutoGrade(pointsTotal, targets.gradeThresholds);
-      return { id: p.id, name: p.name || null, label, grade: p.grade, count, total, winRateP, biggestWin, biggestLoss, pointsTotal, autoGrade };
+      const sortedTrades = [...taggedTrades].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+      return { id: p.id, name: p.name || null, label, confLabel, tagLabel, grade: p.grade, count, total, winRateP, biggestWin, biggestLoss, pointsTotal, autoGrade, trades: sortedTrades };
     });
   const ratedPatternPerf = patternPerf.filter((p) => p.count > 0);
   const bestConfluencePattern = ratedPatternPerf.length
@@ -3331,13 +3332,28 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                         <button onClick={() => deletePatternRow(p.id)} style={deleteBtnStyle_()} aria-label="Delete pattern">✕</button>
                       </div>
                     </div>
+                    <div
+                      onClick={() => setExpandedPatternId(expandedPatternId === p.id ? null : p.id)}
+                      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 6, cursor: "pointer" }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 9.5, fontWeight: 700, color: COLORS.textMuted, textTransform: "uppercase", letterSpacing: "0.04em" }}>Confluences</div>
+                        <div style={{ fontSize: 12, color: p.confLabel ? COLORS.text : COLORS.textMuted }}>{p.confLabel || "—"}</div>
+                      </div>
+                      <div style={{ textAlign: "right", minWidth: 0 }}>
+                        <div style={{ fontSize: 9.5, fontWeight: 700, color: COLORS.textMuted, textTransform: "uppercase", letterSpacing: "0.04em" }}>Targets</div>
+                        <div style={{ fontSize: 12, color: p.tagLabel ? COLORS.text : COLORS.textMuted }}>{p.tagLabel || "—"}</div>
+                      </div>
+                    </div>
                     <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                      <span>{p.label}</span>
                       {p.autoGrade ? (
-                        <span>· <b style={{ color: gradeColor(p.autoGrade) || COLORS.text }}>{p.autoGrade}</b></span>
+                        <span><b style={{ color: gradeColor(p.autoGrade) || COLORS.text }}>{p.autoGrade}</b></span>
                       ) : (
-                        <span>· Ungraded</span>
+                        <span>Ungraded</span>
                       )}
+                      <span style={{ color: COLORS.accent, fontWeight: 600 }}>
+                        {expandedPatternId === p.id ? "Hide trades ▲" : "Show trades ▼"}
+                      </span>
                     </div>
                     {p.count === 0 ? (
                       <div style={{ fontSize: 12.5, color: COLORS.textMuted }}>No trades tagged with this exact combination yet.</div>
@@ -3348,6 +3364,20 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                         <span>Total P&L <span style={{ fontWeight: 700, color: p.total >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(p.total)}</span></span>
                         <span>Biggest win <span style={{ fontWeight: 700, color: COLORS.win }}>{fmtMoney(p.biggestWin)}</span></span>
                         <span>Biggest loss <span style={{ fontWeight: 700, color: COLORS.loss }}>{fmtMoney(p.biggestLoss)}</span></span>
+                      </div>
+                    )}
+                    {expandedPatternId === p.id && (
+                      <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${COLORS.border}`, display: "grid", gap: 6 }}>
+                        {p.trades.length === 0 ? (
+                          <div style={{ fontSize: 12, color: COLORS.textMuted }}>No trades tagged with this exact combination yet.</div>
+                        ) : (
+                          p.trades.map((t) => (
+                            <div key={t.id} className="mono" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: 12, padding: "6px 10px", background: COLORS.subtleBg, borderRadius: 8 }}>
+                              <span style={{ color: COLORS.textMuted }}>#{tradeNumberMap.get(t.id)} · {t.date} · {t.symbol || "—"}</span>
+                              <span style={{ fontWeight: 700, color: t.pnl >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(t.pnl)}</span>
+                            </div>
+                          ))
+                        )}
                       </div>
                     )}
                   </div>
