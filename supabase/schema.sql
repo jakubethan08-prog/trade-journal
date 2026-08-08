@@ -975,3 +975,12 @@ alter table public.targets add column if not exists grade_thresholds jsonb not n
 -- auto-generated "confluence + confluence" combination label.
 -- =========================================================================
 alter table public.patterns add column if not exists name text;
+
+-- =========================================================================
+-- Target tags: a customisable value per tag, same idea as confluence points.
+-- =========================================================================
+alter table public.target_tags add column if not exists value numeric not null default 0;
+
+drop policy if exists "update own target tags" on public.target_tags;
+create policy "update own target tags" on public.target_tags
+  for update using (auth.uid() = user_id) with check (auth.uid() = user_id);

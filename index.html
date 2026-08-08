@@ -1933,6 +1933,13 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     setTTargetTags(tTargetTags.filter((tid) => tid !== id));
   }
 
+  async function updateTargetTagValue(id, value) {
+    const n = value === "" || value === null || value === undefined ? 0 : Number(value);
+    setTargetTagsList((prev) => prev.map((t) => (t.id === id ? { ...t, value: n } : t)));
+    const { error } = await supabaseClient.from("target_tags").update({ value: n }).eq("id", id);
+    if (error) setPatternFormError("Couldn't save that target's value.");
+  }
+
   function toggleTargetTag(id) {
     setTTargetTags((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
@@ -3254,15 +3261,14 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                         style={{ ...inputStyle_(), width: "auto", flex: "1 1 200px", fontSize: 14, fontWeight: 700, border: "none", background: "transparent", padding: "2px 0" }}
                       />
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <select value={p.grade || ""} onChange={(e) => updatePatternGrade(p.id, e.target.value)} style={{ ...inputStyle_(), width: "auto", display: "inline-block" }}>
-                          <option value="">Ungraded</option>
-                          {GRADES.slice().reverse().map((g) => <option key={g} value={g}>{g}</option>)}
-                        </select>
                         <button onClick={() => deletePatternRow(p.id)} style={deleteBtnStyle_()} aria-label="Delete pattern">✕</button>
                       </div>
                     </div>
                     <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                       <span>{p.label}</span>
+                      {p.grade && (
+                        <span>Grade: <b style={{ color: gradeColor(p.grade) || COLORS.text }}>{p.grade}</b></span>
+                      )}
                       {p.autoGrade && (
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                           · Auto-grade ({p.pointsTotal} pts): <b style={{ color: gradeColor(p.autoGrade) || COLORS.text }}>{p.autoGrade}</b>
@@ -3602,14 +3608,27 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
             {targetTagsList.length === 0 ? (
               <EmptyState text="No targets yet. Add some above, then select them on a trade in Add Trade." />
             ) : (
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 28 }}>
-                {targetTagsList.map((tg) => (
-                  <span key={tg.id} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: COLORS.subtleBg, border: `1.5px solid ${COLORS.border}`, borderRadius: 20, padding: "6px 8px 6px 14px", fontSize: 12.5, fontWeight: 600, color: COLORS.text }}>
-                    {tg.name}
-                    <button onClick={() => deleteTargetTag(tg.id)} style={{ ...deleteBtnStyle_(), padding: 0, fontSize: 12 }} aria-label={`Delete ${tg.name}`}>✕</button>
-                  </span>
-                ))}
-              </div>
+              <>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+                  {targetTagsList.map((tg) => (
+                    <span key={tg.id} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: COLORS.subtleBg, border: `1.5px solid ${COLORS.border}`, borderRadius: 20, padding: "6px 8px 6px 14px", fontSize: 12.5, fontWeight: 600, color: COLORS.text }}>
+                      {tg.name}
+                      <input
+                        type="number"
+                        step="0.5"
+                        value={tg.value === 0 || tg.value ? tg.value : 0}
+                        onChange={(e) => updateTargetTagValue(tg.id, e.target.value)}
+                        title="Custom value"
+                        style={{ width: 44, fontSize: 12, padding: "2px 4px", borderRadius: 8, border: `1px solid ${COLORS.border}`, background: COLORS.card, color: COLORS.text }}
+                      />
+                      <button onClick={() => deleteTargetTag(tg.id)} style={{ ...deleteBtnStyle_(), padding: 0, fontSize: 12 }} aria-label={`Delete ${tg.name}`}>✕</button>
+                    </span>
+                  ))}
+                </div>
+                <div style={{ fontSize: 11.5, color: COLORS.textMuted, marginBottom: 28 }}>
+                  Set a custom value per target tag for your own reference.
+                </div>
+              </>
             )}
 
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, maxWidth: 420 }}>
