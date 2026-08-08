@@ -3351,9 +3351,13 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                       ) : (
                         <span>Ungraded</span>
                       )}
-                      <span style={{ color: COLORS.accent, fontWeight: 600 }}>
+                      <button
+                        type="button"
+                        onClick={() => setExpandedPatternId(expandedPatternId === p.id ? null : p.id)}
+                        style={{ background: "none", border: "none", padding: 0, color: COLORS.accent, fontWeight: 600, fontSize: 12, cursor: "pointer" }}
+                      >
                         {expandedPatternId === p.id ? "Hide trades ▲" : "Show trades ▼"}
-                      </span>
+                      </button>
                     </div>
                     {p.count === 0 ? (
                       <div style={{ fontSize: 12.5, color: COLORS.textMuted }}>No trades tagged with this exact combination yet.</div>
