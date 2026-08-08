@@ -3233,88 +3233,12 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           </>
         ) : tab === "patterns" ? (
           <>
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Confluences</div>
-            <form onSubmit={addConfluence} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
-              <Field label="New confluence name" style={{ flex: "1 1 220px" }}>
-                <input type="text" value={newConfluenceName} onChange={(e) => setNewConfluenceName(e.target.value)} placeholder="e.g. IFVG" style={inputStyle_()} />
-              </Field>
-              <button type="submit" style={primaryBtnStyle_()}>Add confluence</button>
-            </form>
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Patterns</div>
             {patternFormError && (
               <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13, marginBottom: 16 }}>
                 {patternFormError}
               </div>
             )}
-
-            {confluencesList.length === 0 ? (
-              <EmptyState text="No confluences yet. Add some above (e.g. IFVG, HTF FVG, CISD), then select them on a trade in Add Trade." />
-            ) : (
-              <>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-                  {confluencesList.map((c) => (
-                    <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: COLORS.subtleBg, border: `1.5px solid ${COLORS.border}`, borderRadius: 20, padding: "6px 8px 6px 14px", fontSize: 12.5, fontWeight: 600, color: COLORS.text }}>
-                      {c.name}
-                      <input
-                        type="number"
-                        step="0.5"
-                        value={c.points === 0 || c.points ? c.points : 0}
-                        onChange={(e) => updateConfluencePoints(c.id, e.target.value)}
-                        title="Points toward auto-grading"
-                        style={{ width: 44, fontSize: 12, padding: "2px 4px", borderRadius: 8, border: `1px solid ${COLORS.border}`, background: COLORS.card, color: COLORS.text }}
-                      />
-                      <button onClick={() => deleteConfluence(c.id)} style={{ ...deleteBtnStyle_(), padding: 0, fontSize: 12 }} aria-label={`Delete ${c.name}`}>✕</button>
-                    </span>
-                  ))}
-                </div>
-                <div style={{ fontSize: 11.5, color: COLORS.textMuted, marginBottom: 28 }}>
-                  Set a point value per confluence, then define grade thresholds below to auto-grade patterns.
-                </div>
-              </>
-            )}
-
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Grade thresholds</div>
-            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 28, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
-              {GRADES.slice().reverse().map((g) => (
-                <Field key={g} label={g} style={{ width: 84 }}>
-                  <input
-                    type="number"
-                    step="0.5"
-                    value={targets.gradeThresholds && targets.gradeThresholds[g] !== undefined ? targets.gradeThresholds[g] : ""}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      const next = { ...(targets.gradeThresholds || {}) };
-                      if (v === "") delete next[g]; else next[g] = Number(v);
-                      updateTargets({ gradeThresholds: next });
-                    }}
-                    placeholder="pts"
-                    style={inputStyle_()}
-                  />
-                </Field>
-              ))}
-            </div>
-
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Targets</div>
-            <form onSubmit={addTargetTag} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
-              <Field label="New target name" style={{ flex: "1 1 220px" }}>
-                <input type="text" value={newTargetTagName} onChange={(e) => setNewTargetTagName(e.target.value)} placeholder="e.g. Previous day high" style={inputStyle_()} />
-              </Field>
-              <button type="submit" style={primaryBtnStyle_()}>Add target</button>
-            </form>
-
-            {targetTagsList.length === 0 ? (
-              <EmptyState text="No targets yet. Add some above, then select them on a trade in Add Trade." />
-            ) : (
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 28 }}>
-                {targetTagsList.map((tg) => (
-                  <span key={tg.id} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: COLORS.subtleBg, border: `1.5px solid ${COLORS.border}`, borderRadius: 20, padding: "6px 8px 6px 14px", fontSize: 12.5, fontWeight: 600, color: COLORS.text }}>
-                    {tg.name}
-                    <button onClick={() => deleteTargetTag(tg.id)} style={{ ...deleteBtnStyle_(), padding: 0, fontSize: 12 }} aria-label={`Delete ${tg.name}`}>✕</button>
-                  </span>
-                ))}
-              </div>
-            )}
-
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Patterns</div>
             {patternsList.length === 0 ? (
               <EmptyState text="Patterns are built automatically: tag a trade with a combination of confluences (in Add Trade), and that combination shows up here to grade and track." />
             ) : (
@@ -3604,6 +3528,89 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                 </button>
               )}
             </div>
+
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Pattern configuration</div>
+
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: COLORS.textMuted, marginBottom: 10 }}>Confluences</div>
+            <form onSubmit={addConfluence} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+              <Field label="New confluence name" style={{ flex: "1 1 220px" }}>
+                <input type="text" value={newConfluenceName} onChange={(e) => setNewConfluenceName(e.target.value)} placeholder="e.g. IFVG" style={inputStyle_()} />
+              </Field>
+              <button type="submit" style={primaryBtnStyle_()}>Add confluence</button>
+            </form>
+            {patternFormError && (
+              <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13, marginBottom: 16 }}>
+                {patternFormError}
+              </div>
+            )}
+
+            {confluencesList.length === 0 ? (
+              <EmptyState text="No confluences yet. Add some above (e.g. IFVG, HTF FVG, CISD), then select them on a trade in Add Trade." />
+            ) : (
+              <>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+                  {confluencesList.map((c) => (
+                    <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: COLORS.subtleBg, border: `1.5px solid ${COLORS.border}`, borderRadius: 20, padding: "6px 8px 6px 14px", fontSize: 12.5, fontWeight: 600, color: COLORS.text }}>
+                      {c.name}
+                      <input
+                        type="number"
+                        step="0.5"
+                        value={c.points === 0 || c.points ? c.points : 0}
+                        onChange={(e) => updateConfluencePoints(c.id, e.target.value)}
+                        title="Points toward auto-grading"
+                        style={{ width: 44, fontSize: 12, padding: "2px 4px", borderRadius: 8, border: `1px solid ${COLORS.border}`, background: COLORS.card, color: COLORS.text }}
+                      />
+                      <button onClick={() => deleteConfluence(c.id)} style={{ ...deleteBtnStyle_(), padding: 0, fontSize: 12 }} aria-label={`Delete ${c.name}`}>✕</button>
+                    </span>
+                  ))}
+                </div>
+                <div style={{ fontSize: 11.5, color: COLORS.textMuted, marginBottom: 28 }}>
+                  Set a point value per confluence, then define grade thresholds below to auto-grade patterns.
+                </div>
+              </>
+            )}
+
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: COLORS.textMuted, marginBottom: 10 }}>Grade thresholds</div>
+            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 28, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+              {GRADES.slice().reverse().map((g) => (
+                <Field key={g} label={g} style={{ width: 84 }}>
+                  <input
+                    type="number"
+                    step="0.5"
+                    value={targets.gradeThresholds && targets.gradeThresholds[g] !== undefined ? targets.gradeThresholds[g] : ""}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      const next = { ...(targets.gradeThresholds || {}) };
+                      if (v === "") delete next[g]; else next[g] = Number(v);
+                      updateTargets({ gradeThresholds: next });
+                    }}
+                    placeholder="pts"
+                    style={inputStyle_()}
+                  />
+                </Field>
+              ))}
+            </div>
+
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: COLORS.textMuted, marginBottom: 10 }}>Target tags</div>
+            <form onSubmit={addTargetTag} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+              <Field label="New target name" style={{ flex: "1 1 220px" }}>
+                <input type="text" value={newTargetTagName} onChange={(e) => setNewTargetTagName(e.target.value)} placeholder="e.g. Previous day high" style={inputStyle_()} />
+              </Field>
+              <button type="submit" style={primaryBtnStyle_()}>Add target</button>
+            </form>
+
+            {targetTagsList.length === 0 ? (
+              <EmptyState text="No targets yet. Add some above, then select them on a trade in Add Trade." />
+            ) : (
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 28 }}>
+                {targetTagsList.map((tg) => (
+                  <span key={tg.id} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: COLORS.subtleBg, border: `1.5px solid ${COLORS.border}`, borderRadius: 20, padding: "6px 8px 6px 14px", fontSize: 12.5, fontWeight: 600, color: COLORS.text }}>
+                    {tg.name}
+                    <button onClick={() => deleteTargetTag(tg.id)} style={{ ...deleteBtnStyle_(), padding: 0, fontSize: 12 }} aria-label={`Delete ${tg.name}`}>✕</button>
+                  </span>
+                ))}
+              </div>
+            )}
 
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, maxWidth: 420 }}>
               <span style={{ fontSize: 13, fontWeight: 700 }}>Targets</span>
