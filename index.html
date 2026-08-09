@@ -1280,6 +1280,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const [newConfluenceName, setNewConfluenceName] = useState("");
   const [patternFormError, setPatternFormError] = useState(null);
   const [expandedPatternId, setExpandedPatternId] = useState(null);
+  const [expandedMoodKey, setExpandedMoodKey] = useState(null);
   const [tConfluenceEntries, setTConfluenceEntries] = useState([]); // [{ localId, confluenceId, timeframe }]
   const [pickConfluenceId, setPickConfluenceId] = useState("");
   const [pickTimeframe, setPickTimeframe] = useState("");
@@ -2424,14 +2425,21 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       const key = en.mood || "flat";
       if (!acc[key]) {
         const mi = MOODS.find((m) => m.key === key) || MOODS[MOODS.length - 1];
-        acc[key] = { moodKey: key, label: mi.label, color: mi.color, count: 0, total: 0, wins: 0, durationSum: 0 };
+        acc[key] = { moodKey: key, label: mi.label, color: mi.color, count: 0, total: 0, wins: 0, durationSum: 0, trades: [] };
       }
       acc[key].count += 1; acc[key].total += t.pnl;
       if (t.pnl > 0) acc[key].wins += 1;
       acc[key].durationSum += t.duration;
+      acc[key].trades.push(t);
       return acc;
     }, {})
-  ).map((p) => ({ ...p, winRate: Math.round((p.wins / p.count) * 100), avg: p.total / p.count, avgDuration: Math.round(p.durationSum / p.count) }))
+  ).map((p) => ({
+    ...p,
+    winRate: Math.round((p.wins / p.count) * 100),
+    avg: p.total / p.count,
+    avgDuration: Math.round(p.durationSum / p.count),
+    trades: [...p.trades].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)),
+  }))
    .sort((a, b) => b.total - a.total);
 
   const bestPattern = patternStats[0];
@@ -2765,7 +2773,8 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               </div>
             </div>
 
-            <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 12 }}>
+            <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 12 }}>
+              <StatCard label="Trades taken" value={tradingOnly.length} />
               <StatCard label="Account size" value={fmtMoney(currentBalance)} color={currentBalance >= 0 ? COLORS.win : COLORS.loss} />
               <StatCard label="Your total P&L" value={fmtMoney(totalPnl)} color={totalPnl >= 0 ? COLORS.win : COLORS.loss} />
               <StatCard label="Your win rate" value={`${winRate}%`} />
@@ -2864,14 +2873,6 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                   </Field>
                   <Field label="R:R" style={{ flex: "1 1 90px" }}>
                     <input type="number" step="0.01" min="0" value={tRR} onChange={(e) => setTRR(e.target.value)} placeholder="e.g. 2.50" style={inputStyle_()} className="mono" />
-                  </Field>
-                  <Field label="Grade" style={{ flex: "1 1 90px" }}>
-                    <select value={tGrade} onChange={(e) => setTGrade(e.target.value)} style={inputStyle_()}>
-                      <option value="">—</option>
-                      {GRADES.slice().reverse().map((g) => (
-                        <option key={g} value={g}>{g}</option>
-                      ))}
-                    </select>
                   </Field>
                 </div>
               )}
@@ -3385,7 +3386,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                           return (
                             <div key={t.id} style={{ background: COLORS.subtleBg, borderRadius: 8, padding: "6px 10px" }}>
                               <div
-                                onClick={() => openEditTrade(t)}
+                                onClick={() => setViewTradeId(t.id)}
                                 className="mono"
                                 style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: 12, cursor: "pointer" }}
                               >
@@ -3433,21 +3434,47 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                   {patternStats.map((p) => {
                     const maxAbs = Math.max(...patternStats.map((x) => Math.abs(x.total)), 1);
                     const barWidth = Math.max((Math.abs(p.total) / maxAbs) * 100, 4);
+                    const expanded = expandedMoodKey === p.moodKey;
                     return (
                       <div key={p.moodKey} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
-                        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10 }}>
+                        <div
+                          onClick={() => setExpandedMoodKey(expanded ? null : p.moodKey)}
+                          style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10, cursor: "pointer" }}
+                        >
                           <span style={{ fontSize: 14, fontWeight: 700, color: p.color }}>{p.label}</span>
                           <span className="mono" style={{ fontSize: 15, fontWeight: 700, color: p.total >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(p.total)}</span>
                         </div>
                         <div style={{ background: "#EEF0F7", borderRadius: 5, height: 7, marginBottom: 12, overflow: "hidden" }}>
                           <div style={{ width: `${barWidth}%`, height: "100%", background: p.total >= 0 ? COLORS.win : COLORS.loss, borderRadius: 5 }} />
                         </div>
-                        <div className="mono" style={{ display: "flex", gap: 18, fontSize: 12, color: COLORS.textMuted, flexWrap: "wrap" }}>
+                        <div className="mono" style={{ display: "flex", gap: 18, fontSize: 12, color: COLORS.textMuted, flexWrap: "wrap", alignItems: "center" }}>
                           <span>{p.count} trade{p.count === 1 ? "" : "s"}</span>
                           <span>{p.winRate}% win rate</span>
                           <span>avg {fmtMoney(p.avg)}</span>
                           <span>avg {fmtDuration(p.avgDuration)}</span>
+                          <button
+                            type="button"
+                            onClick={() => setExpandedMoodKey(expanded ? null : p.moodKey)}
+                            style={{ background: "none", border: "none", padding: 0, color: COLORS.accent, fontWeight: 600, fontSize: 12, cursor: "pointer" }}
+                          >
+                            {expanded ? "Hide trades ▲" : "Show trades ▼"}
+                          </button>
                         </div>
+                        {expanded && (
+                          <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${COLORS.border}`, display: "grid", gap: 6 }}>
+                            {p.trades.map((t) => (
+                              <div
+                                key={t.id}
+                                onClick={() => setViewTradeId(t.id)}
+                                className="mono"
+                                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: 12, padding: "6px 10px", background: COLORS.subtleBg, borderRadius: 8, cursor: "pointer" }}
+                              >
+                                <span style={{ color: COLORS.textMuted }}>#{tradeNumberMap.get(t.id)} · {t.date} · {t.symbol || "—"}</span>
+                                <span style={{ fontWeight: 700, color: t.pnl >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(t.pnl)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -4246,6 +4273,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           .filter((l) => l.trade_id === t.id)
           .map((l) => { const tg = targetTagsList.find((x) => x.id === l.target_tag_id); return tg ? tg.name : null; })
           .filter(Boolean);
+        const linkedEntries = entries.filter((en) => en.tradeId === t.id);
         const fields = [
           { label: "Date", value: t.date },
           { label: "Symbol", value: t.symbol || "—" },
@@ -4276,6 +4304,30 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                   </div>
                 ))}
               </div>
+              {linkedEntries.length > 0 && (
+                <div style={{ marginBottom: 18, display: "grid", gap: 10 }}>
+                  <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600 }}>JOURNAL</div>
+                  {linkedEntries.map((en) => {
+                    const mi = moodInfo(en.mood);
+                    return (
+                      <div
+                        key={en.id}
+                        onClick={() => setViewEntryId(en.id)}
+                        style={{ background: COLORS.subtleBg, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "10px 12px", cursor: "pointer" }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: (en.feelingDetail || en.notes) ? 4 : 0 }}>
+                          <span style={{ fontSize: 12.5, fontWeight: 700, color: mi.color }}>{mi.label}</span>
+                        </div>
+                        {(en.feelingDetail || en.notes) && (
+                          <div style={{ fontSize: 12.5, color: COLORS.text }}>
+                            {(en.feelingDetail || en.notes).slice(0, 140)}{(en.feelingDetail || en.notes).length > 140 ? "…" : ""}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
               <div style={{ display: "flex", gap: 10 }}>
                 <button
                   onClick={() => { setViewTradeId(null); openEditTrade(t); }}
