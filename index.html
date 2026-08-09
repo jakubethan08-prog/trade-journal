@@ -1197,6 +1197,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const [selectedDay, setSelectedDay] = useState(null);
   const [mediaModalTradeId, setMediaModalTradeId] = useState(null);
   const [viewTradeId, setViewTradeId] = useState(null);
+  const [viewEntryId, setViewEntryId] = useState(null);
   const [editingTradeId, setEditingTradeId] = useState(null);
   const [editForm, setEditForm] = useState(null);
   const [editPickConfluenceId, setEditPickConfluenceId] = useState("");
@@ -3331,10 +3332,11 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                       <input
                         key={p.id + ":" + (p.name || p.label)}
                         type="text"
+                        size={Math.max(12, (p.name || p.label).length + 1)}
                         defaultValue={p.name || p.label}
                         placeholder="Name this pattern"
                         onBlur={(e) => { if (e.target.value.trim() !== (p.name || p.label)) updatePatternName(p.id, e.target.value); }}
-                        style={{ ...inputStyle_(), width: "auto", maxWidth: 280, textAlign: "center", fontSize: 14, fontWeight: 700, border: "none", background: "transparent", padding: "2px 0" }}
+                        style={{ ...inputStyle_(), width: "auto", maxWidth: "100%", textAlign: "center", fontSize: 14, fontWeight: 700, border: "none", background: "transparent", padding: "2px 0" }}
                       />
                       {p.autoGrade ? (
                         <b style={{ fontSize: 14, color: gradeColor(p.autoGrade) || COLORS.text, whiteSpace: "nowrap" }}>{p.autoGrade}</b>
@@ -3390,7 +3392,11 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                                   {linkedEntries.map((en) => {
                                     const mi = moodInfo(en.mood);
                                     return (
-                                      <div key={en.id} style={{ fontSize: 11, color: COLORS.accent, display: "flex", alignItems: "center", gap: 6 }}>
+                                      <div
+                                        key={en.id}
+                                        onClick={(e) => { e.stopPropagation(); setViewEntryId(en.id); }}
+                                        style={{ fontSize: 11, color: COLORS.accent, display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}
+                                      >
                                         <span>🔗</span>
                                         <span style={{ color: mi.color, fontWeight: 600 }}>{mi.label}</span>
                                         {(en.feelingDetail || en.notes) && <span style={{ color: COLORS.textMuted }}>— {(en.feelingDetail || en.notes).slice(0, 60)}{(en.feelingDetail || en.notes).length > 60 ? "…" : ""}</span>}
@@ -4277,6 +4283,68 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                   style={{ ...ghostBtnStyle_(), flex: 1 }}
                 >
                   📎 {(t.media || []).length ? `View ${(t.media || []).length} attachment${(t.media || []).length === 1 ? "" : "s"}` : "Add photos/videos"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {viewEntryId && (() => {
+        const en = entries.find((e) => e.id === viewEntryId);
+        if (!en) return null;
+        const mi = moodInfo(en.mood);
+        const linkedTrade = en.tradeId ? findTrade(en.tradeId) : null;
+        const fields = [
+          { label: "Date", value: en.date },
+          { label: "Mood", value: mi.label, color: mi.color },
+          { label: "Conditions", value: en.conditions || "—" },
+          { label: "Linked trade", value: linkedTrade ? `#${tradeNumberMap.get(linkedTrade.id)} · ${fmtMoney(linkedTrade.pnl)}` : "—", color: linkedTrade ? pnlColor(linkedTrade) : null },
+        ];
+        return (
+          <div onClick={() => setViewEntryId(null)} style={{ position: "fixed", inset: 0, background: "rgba(20,20,35,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 55 }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.card, borderRadius: 16, padding: 24, width: "100%", maxWidth: 460, boxShadow: "0 20px 60px rgba(20,20,35,0.35)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
+                <div>
+                  <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600, marginBottom: 2 }}>JOURNAL ENTRY</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: mi.color }}>{mi.label}</div>
+                </div>
+                <button onClick={() => setViewEntryId(null)} style={deleteBtnStyle_()} aria-label="Close">✕</button>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 18 }}>
+                {fields.map((f) => (
+                  <div key={f.label}>
+                    <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>{f.label.toUpperCase()}</div>
+                    <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: f.color || COLORS.text }}>{f.value}</div>
+                  </div>
+                ))}
+              </div>
+              {en.feelingDetail && (
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>WHAT WAS THE FEELING</div>
+                  <div style={{ fontSize: 13.5, color: COLORS.text, whiteSpace: "pre-wrap" }}>{en.feelingDetail}</div>
+                </div>
+              )}
+              {en.notes && (
+                <div style={{ marginBottom: 18 }}>
+                  <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>NOTES</div>
+                  <div style={{ fontSize: 13.5, color: COLORS.text, whiteSpace: "pre-wrap" }}>{en.notes}</div>
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 10 }}>
+                {linkedTrade && (
+                  <button
+                    onClick={() => { setViewEntryId(null); setViewTradeId(linkedTrade.id); }}
+                    style={{ ...ghostBtnStyle_(), flex: 1 }}
+                  >
+                    View linked trade
+                  </button>
+                )}
+                <button
+                  onClick={() => { setViewEntryId(null); deleteEntry(en.id); }}
+                  style={{ ...deleteBtnStyle_(), flex: linkedTrade ? "0 0 auto" : 1, padding: "10px 16px" }}
+                >
+                  Delete entry
                 </button>
               </div>
             </div>
