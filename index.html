@@ -1407,6 +1407,8 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const [jNotes, setJNotes] = useState("");
   const [jFeelingDetail, setJFeelingDetail] = useState("");
   const [jLinkedTradeId, setJLinkedTradeId] = useState("");
+  const [editingEntryId, setEditingEntryId] = useState(null);
+  const [editEntryForm, setEditEntryForm] = useState(null);
 
   const [friendships, setFriendships] = useState([]);
   const [friendsLoading, setFriendsLoading] = useState(true);
@@ -2403,6 +2405,44 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     const next = [rowToEntry(data), ...entries].sort((a, b) => (a.date < b.date ? 1 : -1));
     setEntries(next);
     setJConditions(""); setJNotes(""); setJFeelingDetail(""); setJLinkedTradeId("");
+  }
+
+  function openEditEntry(en) {
+    setEditingEntryId(en.id);
+    setEditEntryForm({
+      date: en.date,
+      mood: en.mood,
+      feelingDetail: en.feelingDetail || "",
+      conditions: en.conditions || "",
+      notes: en.notes || "",
+      tradeId: en.tradeId || "",
+      error: null,
+    });
+  }
+
+  async function saveEditedEntry() {
+    if (!editEntryForm.date) { setEditEntryForm({ ...editEntryForm, error: "Please pick a date." }); return; }
+    const patch = {
+      date: editEntryForm.date,
+      mood: editEntryForm.mood,
+      feeling_detail: editEntryForm.feelingDetail.trim() || null,
+      conditions: editEntryForm.conditions.trim() || null,
+      notes: editEntryForm.notes.trim() || null,
+      trade_id: editEntryForm.tradeId || null,
+    };
+    const { error } = await supabaseClient.from("journal_entries").update(patch).eq("id", editingEntryId);
+    if (error) { setEditEntryForm({ ...editEntryForm, error: "Couldn't save changes — try again." }); return; }
+    setEntries(entries.map((en) => (en.id === editingEntryId ? {
+      ...en,
+      date: patch.date,
+      mood: patch.mood,
+      feelingDetail: patch.feeling_detail || "",
+      conditions: patch.conditions || "",
+      notes: patch.notes || "",
+      tradeId: patch.trade_id,
+    } : en)));
+    setEditingEntryId(null);
+    setEditEntryForm(null);
   }
 
   async function deleteTrade(id) {
@@ -4363,6 +4403,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                             <span style={{ fontSize: 11, color: COLORS.textMuted, fontStyle: "italic" }}>Linked trade deleted</span>
                           )}
                         </div>
+                        <button onClick={() => openEditEntry(en)} style={{ ...deleteBtnStyle_(), marginRight: 4 }} aria-label="Edit entry">✎</button>
                         <button onClick={() => deleteEntry(en.id)} style={deleteBtnStyle_()} aria-label="Delete entry">✕</button>
                       </div>
                       {en.feelingDetail && (
@@ -4631,6 +4672,68 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
         </div>
       )}
 
+      {editingEntryId && editEntryForm && (
+        <div onClick={() => { setEditingEntryId(null); setEditEntryForm(null); }} style={{ position: "fixed", inset: 0, background: "rgba(20,20,35,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 58 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.card, borderRadius: 16, padding: 24, width: "100%", maxWidth: 520, maxHeight: "86vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(20,20,35,0.35)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div style={{ fontSize: 16, fontWeight: 700 }}>Edit journal entry</div>
+              <button onClick={() => { setEditingEntryId(null); setEditEntryForm(null); }} style={deleteBtnStyle_()} aria-label="Close">✕</button>
+            </div>
+            <div style={{ display: "grid", gap: 12 }}>
+              <Field label="Date">
+                <input type="date" value={editEntryForm.date} onChange={(e) => setEditEntryForm({ ...editEntryForm, date: e.target.value })} style={inputStyle_()} />
+              </Field>
+              <Field label="Link to trade (optional)">
+                <select value={editEntryForm.tradeId} onChange={(e) => setEditEntryForm({ ...editEntryForm, tradeId: e.target.value })} style={inputStyle_()}>
+                  <option value="">— No trade linked —</option>
+                  {linkableTrades.map((t) => (
+                    <option key={t.id} value={t.id}>{tradeLabel(t)}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="How did you feel?">
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                  {MOODS.map((m) => (
+                    <button
+                      type="button" key={m.key} onClick={() => setEditEntryForm({ ...editEntryForm, mood: m.key })}
+                      style={{
+                        background: editEntryForm.mood === m.key ? m.color + "1A" : COLORS.subtleBg,
+                        border: `1.5px solid ${editEntryForm.mood === m.key ? m.color : COLORS.border}`,
+                        color: editEntryForm.mood === m.key ? m.color : COLORS.textMuted,
+                        padding: "7px 14px", borderRadius: 20, fontSize: 13, fontWeight: 600, cursor: "pointer",
+                      }}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  value={editEntryForm.feelingDetail}
+                  onChange={(e) => setEditEntryForm({ ...editEntryForm, feelingDetail: e.target.value })}
+                  placeholder="Go deeper — what triggered it, how it showed up in your trading…"
+                  style={{ ...inputStyle_(), minHeight: 60, resize: "vertical" }}
+                />
+              </Field>
+              <Field label="Market conditions">
+                <textarea value={editEntryForm.conditions} onChange={(e) => setEditEntryForm({ ...editEntryForm, conditions: e.target.value })} placeholder="Choppy pre-CPI, low volume, range-bound…" style={{ ...inputStyle_(), minHeight: 60, resize: "vertical" }} />
+              </Field>
+              <Field label="Notes">
+                <textarea value={editEntryForm.notes} onChange={(e) => setEditEntryForm({ ...editEntryForm, notes: e.target.value })} placeholder="What happened, what you'd do differently…" style={{ ...inputStyle_(), minHeight: 80, resize: "vertical" }} />
+              </Field>
+              {editEntryForm.error && (
+                <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "8px 12px", borderRadius: 8, fontSize: 13 }}>
+                  {editEntryForm.error}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={saveEditedEntry} style={primaryBtnStyle_()}>Save changes</button>
+                <button onClick={() => { setEditingEntryId(null); setEditEntryForm(null); }} style={ghostBtnStyle_()}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {viewTradeId && (() => {
         const t = findTrade(viewTradeId);
         if (!t) return null;
@@ -4759,6 +4862,12 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               </div>
             )}
             <div style={{ display: "flex", gap: 10 }}>
+              <button
+                onClick={() => { setViewEntryId(null); openEditEntry(en); }}
+                style={{ ...primaryBtnStyle_(), flex: 1, textAlign: "center" }}
+              >
+                ✎ Edit entry
+              </button>
               {linkedTrade && (
                 <button
                   onClick={() => { setViewEntryId(null); setViewTradeId(linkedTrade.id); }}
@@ -4769,7 +4878,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               )}
               <button
                 onClick={() => { setViewEntryId(null); deleteEntry(en.id); }}
-                style={{ ...deleteBtnStyle_(), flex: linkedTrade ? "0 0 auto" : 1, padding: "10px 16px" }}
+                style={{ ...deleteBtnStyle_(), flex: "0 0 auto", padding: "10px 16px" }}
               >
                 Delete entry
               </button>
