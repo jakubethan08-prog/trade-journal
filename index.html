@@ -2400,6 +2400,8 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const grossWin = tradingOnly.filter(t => t.pnl > 0).reduce((s,t)=>s+t.pnl,0);
   const grossLoss = Math.abs(tradingOnly.filter(t => t.pnl < 0).reduce((s,t)=>s+t.pnl,0));
   const profitFactor = grossLoss > 0 ? (grossWin / grossLoss) : (grossWin > 0 ? Infinity : 0);
+  const tradesWithRR = tradingOnly.filter((t) => t.rr !== null && t.rr !== undefined && !Number.isNaN(t.rr));
+  const avgRR = tradesWithRR.length ? tradesWithRR.reduce((s, t) => s + t.rr, 0) / tradesWithRR.length : null;
 
   const moodInfo = (key) => MOODS.find((m) => m.key === key) || MOODS[MOODS.length - 1];
 
@@ -3112,11 +3114,12 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           </>
         ) : tab === "calendar" ? (
           <>
-            <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
+            <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 20 }}>
               <StatCard label="Total P&L" value={fmtMoney(totalPnl)} color={totalPnl >= 0 ? COLORS.win : COLORS.loss} />
               <StatCard label="Win rate" value={`${winRate}%`} />
               <StatCard label="Profit factor" value={profitFactor === Infinity ? "∞" : profitFactor.toFixed(2)} />
               <StatCard label="Avg duration" value={fmtDuration(avgDuration)} />
+              <StatCard label="Avg R:R" value={avgRR === null ? "—" : `${avgRR.toFixed(2)}R`} />
             </div>
 
             <div className="perf-top" style={{ marginBottom: 28 }}>
