@@ -776,6 +776,142 @@ function EquityChart({ points, width = 900, height = 220, profitTarget = null, m
   );
 }
 
+// A single red line/area showing running drawdown from peak (always <= 0),
+// with the same hover-crosshair-and-tooltip interaction as EquityChart, but
+// simplified — no target lines, just date + drawdown value.
+function DrawdownChart({ points, width = 640, height = 220 }) {
+  const svgRef = useRef(null);
+  const [hoverIdx, setHoverIdx] = useState(null);
+
+  if (!points || points.length < 2) {
+    return (
+      <div style={{ height, display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.textMuted, fontSize: 13 }}>
+        Log trades to see your drawdown.
+      </div>
+    );
+  }
+  const values = points.map((p) => p.value);
+  const min = Math.min(...values, 0);
+  const max = 0;
+  const range = max - min || 1;
+  const padTop = 16, padBottom = 30, padRight = 56;
+  const usableH = height - padTop - padBottom;
+  const stepX = (width - padRight) / (points.length - 1);
+
+  function xAt(i) { return i * stepX; }
+  function yAt(v) { return padTop + usableH - ((v - min) / range) * usableH; }
+
+  function fmtAxis(v) {
+    const sign = v < 0 ? "−" : "";
+    const abs = Math.abs(v);
+    if (abs >= 1000) return `${sign}$${(abs / 1000).toFixed(abs % 1000 === 0 ? 0 : 1)}k`;
+    return `${sign}$${Math.round(abs)}`;
+  }
+  const yStep = (Math.abs(min) / 4) || 1;
+  const yTicks = [];
+  for (let v = 0; v >= min - yStep * 0.001; v -= yStep) yTicks.push(Math.round(v * 100) / 100);
+
+  const linePoints = points.map((p, i) => ({ x: xAt(i), y: yAt(p.value) }));
+  const linePath = smoothPath(linePoints);
+  const chartBottomY = height - padBottom + 10;
+  const areaPath = `${linePath} L ${xAt(points.length - 1).toFixed(1)} ${chartBottomY.toFixed(1)} L 0 ${chartBottomY.toFixed(1)} Z`;
+
+  function fmtTick(dateStr) {
+    if (!dateStr) return "";
+    const d = new Date(dateStr + "T00:00:00");
+    if (Number.isNaN(d.getTime())) return dateStr;
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+
+  function handleMouseMove(e) {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const relX = e.clientX - rect.left;
+    const svgX = (relX / rect.width) * width;
+    let idx = Math.round(svgX / stepX);
+    idx = Math.max(0, Math.min(points.length - 1, idx));
+    setHoverIdx(idx);
+  }
+  function handleMouseLeave() { setHoverIdx(null); }
+
+  const desiredTickCount = Math.min(Math.max(4, Math.floor((width - padRight) / 70)), points.length);
+  const step = Math.max(1, Math.ceil((points.length - 1) / Math.max(desiredTickCount - 1, 1)));
+  const tickIdxs = [];
+  for (let i = 0; i < points.length; i += step) tickIdxs.push(i);
+
+  return (
+    <svg
+      ref={svgRef}
+      viewBox={`0 0 ${width} ${height}`}
+      width="100%"
+      height={height}
+      preserveAspectRatio="none"
+      style={{ display: "block", overflow: "visible", cursor: "crosshair" }}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+    >
+      <defs>
+        <linearGradient id="drawdownFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={COLORS.loss} stopOpacity="0.05" />
+          <stop offset="100%" stopColor={COLORS.loss} stopOpacity="0.38" />
+        </linearGradient>
+      </defs>
+
+      {yTicks.map((v, i) => (
+        <g key={i}>
+          <line x1="0" y1={yAt(v)} x2={width - padRight} y2={yAt(v)} stroke={COLORS.border} strokeWidth="1" />
+          <text x={width - padRight + 8} y={yAt(v) + 3.5} textAnchor="start" fontSize="10.5" fill={COLORS.textMuted}>
+            {fmtAxis(v)}
+          </text>
+        </g>
+      ))}
+
+      <path d={areaPath} fill="url(#drawdownFill)" stroke="none" />
+      <path d={linePath} fill="none" stroke={COLORS.loss} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+
+      <line x1="0" y1={height - padBottom + 10} x2={width - padRight} y2={height - padBottom + 10} stroke={COLORS.border} strokeWidth="1" />
+      {tickIdxs.map((i) => {
+        const anchor = i === 0 ? "start" : i === points.length - 1 ? "end" : "middle";
+        const tx = xAt(i);
+        return (
+          <g key={i}>
+            <line x1={tx} y1={height - padBottom + 10} x2={tx} y2={height - padBottom + 14} stroke={COLORS.border} strokeWidth="1" />
+            <text x={tx} y={height - 8} textAnchor={anchor} fontSize="10.5" fontWeight="500" fill={COLORS.textMuted}>
+              {fmtTick(points[i].date)}
+            </text>
+          </g>
+        );
+      })}
+
+      {hoverIdx !== null && (() => {
+        const hp = points[hoverIdx];
+        const hx = xAt(hoverIdx);
+        const hy = yAt(hp.value);
+        const hoverDateLabel = hp.date ? new Date(hp.date + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
+        const boxW = 140, boxH = 44;
+        const boxX = Math.min(Math.max(hx + 10, 0), width - boxW);
+        const boxY = Math.min(Math.max(hy - boxH - 10, padTop), height - padBottom - boxH);
+        return (
+          <g pointerEvents="none">
+            <line x1={hx} y1={padTop} x2={hx} y2={height - padBottom + 10} stroke={COLORS.textMuted} strokeWidth="1" strokeDasharray="3 3" />
+            <circle cx={hx} cy={hy} r="4.5" fill={COLORS.loss} stroke={COLORS.card} strokeWidth="1.5" />
+            <rect x={boxX} y={boxY} width={boxW} height={boxH} rx="8" fill={COLORS.card} stroke={COLORS.border} strokeWidth="1" />
+            {hoverDateLabel && (
+              <text x={boxX + 10} y={boxY + 15} fontSize="10.5" fontWeight="700" fill={COLORS.text}>
+                {hoverDateLabel}
+              </text>
+            )}
+            <text x={boxX + 10} y={boxY + 33} fontSize="12.5" fontWeight="700" fill={COLORS.loss}>
+              {fmtMoney(hp.value)}
+            </text>
+          </g>
+        );
+      })()}
+    </svg>
+  );
+}
+
 function EmptyState({ text }) {
   return (
     <div style={{ border: `1.5px dashed ${COLORS.border}`, borderRadius: 14, padding: "36px 16px", textAlign: "center", color: COLORS.textMuted, fontSize: 13.5, background: COLORS.subtleBg }}>
@@ -1343,6 +1479,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const [patternFormError, setPatternFormError] = useState(null);
   const [expandedPatternId, setExpandedPatternId] = useState(null);
   const [expandedMoodKey, setExpandedMoodKey] = useState(null);
+  const [durationViewMode, setDurationViewMode] = useState("pctTrades"); // 'pctTrades' | 'winRate'
   const [tConfluenceEntries, setTConfluenceEntries] = useState([]); // [{ localId, confluenceId, timeframe }]
   const [pickConfluenceId, setPickConfluenceId] = useState("");
   const [pickTimeframe, setPickTimeframe] = useState("");
@@ -2702,6 +2839,68 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const drawdownRecovered = currentBalance > Math.abs(troughBalance);
   const displayDrawdown = drawdownRecovered ? 0 : troughBalance;
 
+  // ---- Trading Insights (Performance tab) ----
+  const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const weekdayStats = (() => {
+    const byDay = {};
+    tradingOnly.forEach((t) => {
+      const wd = new Date(t.date + "T00:00:00").getDay();
+      if (!byDay[wd]) byDay[wd] = { dates: new Set(), count: 0, total: 0 };
+      byDay[wd].dates.add(t.date);
+      byDay[wd].count += 1;
+      byDay[wd].total += t.pnl;
+    });
+    return Object.entries(byDay).map(([wd, d]) => ({
+      label: WEEKDAY_NAMES[Number(wd)],
+      avgTrades: d.count / d.dates.size,
+      avgPnl: d.total / d.dates.size,
+    }));
+  })();
+  const mostActiveDay = weekdayStats.length ? [...weekdayStats].sort((a, b) => b.avgTrades - a.avgTrades)[0] : null;
+  const mostProfitableDay = weekdayStats.length ? [...weekdayStats].sort((a, b) => b.avgPnl - a.avgPnl)[0] : null;
+  const leastProfitableDay = weekdayStats.length ? [...weekdayStats].sort((a, b) => a.avgPnl - b.avgPnl)[0] : null;
+
+  const shortCount = tradingOnly.filter((t) => t.side === "short").length;
+  const longCount = tradingOnly.length - shortCount;
+  const dominantDirection = tradingOnly.length === 0 ? null : (shortCount > longCount ? "Short" : "Long");
+
+  const drawdownCurve = (() => {
+    let peak = 0;
+    return equityCurve.map((p) => {
+      peak = Math.max(peak, p.balance);
+      return { date: p.date, value: p.balance - peak };
+    });
+  })();
+
+  const winningTradesAll = tradingOnly.filter((t) => t.pnl > 0);
+  const losingTradesAll = tradingOnly.filter((t) => t.pnl < 0);
+  const avgWinAll = winningTradesAll.length ? winningTradesAll.reduce((s, t) => s + t.pnl, 0) / winningTradesAll.length : 0;
+  const avgLossAll = losingTradesAll.length ? losingTradesAll.reduce((s, t) => s + t.pnl, 0) / losingTradesAll.length : 0;
+
+  const DURATION_BUCKETS = [
+    { label: "under 15s", min: 0, max: 15 },
+    { label: "15 to 45s", min: 15, max: 45 },
+    { label: "45s to 1min", min: 45, max: 60 },
+    { label: "1min to 2min", min: 60, max: 120 },
+    { label: "2min to 5min", min: 120, max: 300 },
+    { label: "5min to 10min", min: 300, max: 600 },
+    { label: "10min to 30min", min: 600, max: 1800 },
+    { label: "30min to 1hr", min: 1800, max: 3600 },
+    { label: "1hr to 4hr", min: 3600, max: 14400 },
+    { label: "more than 4hr", min: 14400, max: Infinity },
+  ];
+  const durationBucketStats = DURATION_BUCKETS.map((b) => {
+    const inBucket = tradingOnly.filter((t) => t.duration >= b.min && t.duration < b.max);
+    const wins = inBucket.filter((t) => t.pnl > 0).length;
+    return {
+      label: b.label,
+      count: inBucket.length,
+      pctOfTrades: tradingOnly.length ? (inBucket.length / tradingOnly.length) * 100 : 0,
+      winRate: inBucket.length ? (wins / inBucket.length) * 100 : 0,
+      avgNetPnl: inBucket.length ? inBucket.reduce((s, t) => s + t.pnl, 0) / inBucket.length : 0,
+    };
+  });
+
   const profitTargetNum = targets.profitTarget === "" ? null : Number(targets.profitTarget);
   const maxLossNum = targets.maxLoss === "" ? null : Number(targets.maxLoss);
   // Minimum Balance floor: always trails the peak by the Max Loss amount (e.g. max loss $2,000,
@@ -3397,6 +3596,82 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Trading Insights</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12, marginBottom: 28, alignItems: "stretch" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <StatCard label="Most active" value={mostActiveDay ? mostActiveDay.label : "—"} />
+                <StatCard label="Most profitable" value={mostProfitableDay ? mostProfitableDay.label : "—"} color={mostProfitableDay && mostProfitableDay.avgPnl >= 0 ? COLORS.win : COLORS.loss} />
+                <StatCard label="Least profitable" value={leastProfitableDay ? leastProfitableDay.label : "—"} color={leastProfitableDay && leastProfitableDay.avgPnl >= 0 ? COLORS.win : COLORS.loss} />
+                <StatCard label="Trade direction" value={dominantDirection || "—"} />
+              </div>
+
+              <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Drawdown curve</div>
+                <DrawdownChart points={drawdownCurve} height={220} />
+              </div>
+
+              <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Duration analysis</div>
+                <div style={{ display: "flex", gap: 20, marginBottom: 16, flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>AVG WIN</div>
+                    <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: COLORS.win }}>{fmtMoney(avgWinAll)}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>AVG LOSS</div>
+                    <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: COLORS.loss }}>{fmtMoney(avgLossAll)}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>AVG TRADE DURATION</div>
+                    <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: COLORS.text }}>{fmtDuration(avgDuration)}</div>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gap: 6, marginBottom: 14 }}>
+                  {durationBucketStats.map((b) => {
+                    const metric = durationViewMode === "pctTrades" ? b.pctOfTrades : b.winRate;
+                    const maxMetric = Math.max(...durationBucketStats.map((x) => (durationViewMode === "pctTrades" ? x.pctOfTrades : x.winRate)), 1);
+                    const barWidth = b.count ? Math.max((metric / maxMetric) * 100, 3) : 0;
+                    const barColor = b.avgNetPnl >= 0 ? COLORS.win : COLORS.loss;
+                    return (
+                      <div key={b.label} style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 8, alignItems: "center" }}>
+                        <div style={{ fontSize: 11, color: COLORS.textMuted, textAlign: "right" }}>{b.label}</div>
+                        <div style={{ background: COLORS.subtleBg, borderRadius: 4, height: 14, position: "relative" }}>
+                          {b.count > 0 && (
+                            <div
+                              title={`${b.count} trade${b.count === 1 ? "" : "s"} · avg ${fmtMoney(b.avgNetPnl)}`}
+                              style={{ width: `${barWidth}%`, height: "100%", background: barColor, borderRadius: 4 }}
+                            />
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+                  <div style={{ display: "flex", gap: 14, fontSize: 11, color: COLORS.textMuted }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, borderRadius: 2, background: COLORS.win, display: "inline-block" }} /> Positive avg. net P&L</span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, borderRadius: 2, background: COLORS.loss, display: "inline-block" }} /> Negative avg. net P&L</span>
+                  </div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button
+                      type="button"
+                      onClick={() => setDurationViewMode("pctTrades")}
+                      style={{ ...ghostBtnStyle_(), padding: "4px 10px", fontSize: 11, ...(durationViewMode === "pctTrades" ? { background: COLORS.accentSoft, borderColor: COLORS.accent, color: COLORS.accent } : {}) }}
+                    >
+                      By % of trades
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDurationViewMode("winRate")}
+                      style={{ ...ghostBtnStyle_(), padding: "4px 10px", fontSize: 11, ...(durationViewMode === "winRate" ? { background: COLORS.accentSoft, borderColor: COLORS.accent, color: COLORS.accent } : {}) }}
+                    >
+                      By win rate
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           </>
