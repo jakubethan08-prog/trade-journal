@@ -1102,15 +1102,18 @@ $$;
 grant execute on function public.get_all_feedback() to authenticated;
 
 -- =========================================================================
--- Leaderboard time periods — 1 day / 1 week / 1 month / all time. Replaces
--- the original zero-argument get_leaderboard() with a one-argument version
--- (p_period, defaulting to 'all' so existing zero-arg callers still work);
--- the old zero-arg function is dropped first since Postgres treats a
--- different argument list as a distinct, separately-overloaded function
--- rather than something `create or replace` would replace in place, and
--- leaving both around would make a plain get_leaderboard() call ambiguous.
+-- Leaderboard time periods — ranks by each user's single BEST calendar
+-- day/week/month ever (from their whole history), not "how've you done
+-- since N days ago". Replaces the original zero-argument get_leaderboard()
+-- with a one-argument version (p_period, defaulting to 'all' so existing
+-- zero-arg callers still work); the old zero-arg function is dropped first
+-- since Postgres treats a different argument list as a distinct,
+-- separately-overloaded function rather than something `create or replace`
+-- would replace in place, and leaving both around would make a plain
+-- get_leaderboard() call ambiguous.
 -- =========================================================================
 drop function if exists public.get_leaderboard();
+drop function if exists public.get_leaderboard(text);
 
 create or replace function public.get_leaderboard(p_period text default 'all')
 returns table (user_id uuid, display_name text, total_pnl numeric, win_rate int, trade_count int)
@@ -1119,25 +1122,40 @@ security definer
 set search_path = public
 stable
 as $$
+  with trade_totals as (
+    select
+      t.user_id,
+      case
+        when p_period = 'day' then t.date::text
+        when p_period = 'week' then date_trunc('week', t.date)::text
+        when p_period = 'month' then date_trunc('month', t.date)::text
+        else 'all'
+      end as bucket,
+      sum(t.pnl) filter (where t.entry_type <> 'payout') as bucket_pnl,
+      count(t.id) filter (where t.entry_type <> 'payout') as bucket_count,
+      count(t.id) filter (where t.entry_type <> 'payout' and t.pnl > 0) as bucket_wins
+    from public.trades t
+    group by t.user_id, bucket
+  ),
+  -- The single best-performing bucket (day/week/month/all) per user, by pnl.
+  best_bucket as (
+    select distinct on (user_id)
+      user_id, bucket_pnl, bucket_count, bucket_wins
+    from trade_totals
+    order by user_id, bucket_pnl desc nulls last
+  )
   select
     p.id as user_id,
     coalesce(p.display_name, p.email, 'Trader') as display_name,
-    coalesce(sum(t.pnl) filter (where t.entry_type <> 'payout'), 0) as total_pnl,
-    case when count(t.id) filter (where t.entry_type <> 'payout') > 0
-      then round(100.0 * count(t.id) filter (where t.entry_type <> 'payout' and t.pnl > 0) / count(t.id) filter (where t.entry_type <> 'payout'))
+    coalesce(bb.bucket_pnl, 0) as total_pnl,
+    case when coalesce(bb.bucket_count, 0) > 0
+      then round(100.0 * bb.bucket_wins / bb.bucket_count)
       else 0
     end::int as win_rate,
-    count(t.id) filter (where t.entry_type <> 'payout')::int as trade_count
+    coalesce(bb.bucket_count, 0)::int as trade_count
   from public.profiles p
-  left join public.trades t on t.user_id = p.id
-    and (
-      p_period = 'all'
-      or (p_period = 'day' and t.date = current_date)
-      or (p_period = 'week' and t.date >= current_date - 6)
-      or (p_period = 'month' and t.date >= current_date - 29)
-    )
+  left join best_bucket bb on bb.user_id = p.id
   where p.leaderboard_opt_in = true
-  group by p.id, p.display_name, p.email
   order by total_pnl desc;
 $$;
 grant execute on function public.get_leaderboard(text) to authenticated;
