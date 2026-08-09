@@ -1002,6 +1002,68 @@ function FloatingTargetsWindow({ onClose, children }) {
   );
 }
 
+// A small draggable floating window — used for popups that can appear
+// alongside another one (e.g. a trade + its linked journal entry) so they
+// don't have to stack exactly on top of each other. No backdrop: dragging
+// one out of the way is how you see what's behind it.
+function DraggablePopup({ title, onClose, children, defaultX, defaultY, width = 460 }) {
+  const [pos, setPos] = useState(() => ({
+    x: Math.min(Math.max(20, defaultX), Math.max(20, window.innerWidth - width - 20)),
+    y: Math.min(Math.max(20, defaultY), Math.max(20, window.innerHeight - 100)),
+  }));
+  const dragRef = useRef(null);
+
+  useEffect(() => {
+    function handleMove(e) {
+      if (!dragRef.current) return;
+      const maxX = window.innerWidth - 60;
+      const maxY = window.innerHeight - 60;
+      setPos({
+        x: Math.min(Math.max(0, e.clientX - dragRef.current.offsetX), maxX),
+        y: Math.min(Math.max(0, e.clientY - dragRef.current.offsetY), maxY),
+      });
+    }
+    function handleUp() { dragRef.current = null; }
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    };
+  }, []);
+
+  function startDrag(e) {
+    dragRef.current = { offsetX: e.clientX - pos.x, offsetY: e.clientY - pos.y };
+  }
+
+  return (
+    <div
+      style={{
+        position: "fixed", left: pos.x, top: pos.y, zIndex: 55, width,
+        maxWidth: "calc(100vw - 40px)", maxHeight: "85vh", overflowY: "auto",
+        background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16,
+        boxShadow: "0 20px 60px rgba(20,20,35,0.35)",
+      }}
+    >
+      <div
+        onMouseDown={startDrag}
+        style={{
+          cursor: "grab", display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "10px 16px", borderBottom: `1px solid ${COLORS.border}`,
+          fontWeight: 700, fontSize: 12.5, color: COLORS.textMuted, userSelect: "none", background: COLORS.subtleBg,
+          borderTopLeftRadius: 16, borderTopRightRadius: 16,
+        }}
+      >
+        <span>⠿ {title}</span>
+        <button onClick={onClose} style={deleteBtnStyle_()} aria-label="Close">✕</button>
+      </div>
+      <div style={{ padding: 24 }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function inputStyle_() {
   return {
     background: COLORS.card,
@@ -4307,63 +4369,60 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           { label: "Targets", value: tradeTargetTagNames.length ? tradeTargetTagNames.join(", ") : "—" },
         ];
         return (
-          <div onClick={() => setViewTradeId(null)} style={{ position: "fixed", inset: 0, background: "rgba(20,20,35,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 55 }}>
-            <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.card, borderRadius: 16, padding: 24, width: "100%", maxWidth: 460, boxShadow: "0 20px 60px rgba(20,20,35,0.35)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
-                <div>
-                  <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600, marginBottom: 2 }}>TRADE #{tradeNumberMap.get(t.id)}</div>
-                  <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: pnlColor(t) }}>{fmtMoney(t.pnl)}</div>
+          <DraggablePopup
+            title={`Trade #${tradeNumberMap.get(t.id)}`}
+            onClose={() => setViewTradeId(null)}
+            defaultX={40}
+            defaultY={70}
+          >
+            <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: pnlColor(t), marginBottom: 18 }}>{fmtMoney(t.pnl)}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 18 }}>
+              {fields.map((f) => (
+                <div key={f.label}>
+                  <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>{f.label.toUpperCase()}</div>
+                  <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: f.color || COLORS.text }}>{f.value}</div>
                 </div>
-                <button onClick={() => setViewTradeId(null)} style={deleteBtnStyle_()} aria-label="Close">✕</button>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 18 }}>
-                {fields.map((f) => (
-                  <div key={f.label}>
-                    <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>{f.label.toUpperCase()}</div>
-                    <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: f.color || COLORS.text }}>{f.value}</div>
-                  </div>
-                ))}
-              </div>
-              {linkedEntries.length > 0 && (
-                <div style={{ marginBottom: 18, display: "grid", gap: 10 }}>
-                  <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600 }}>JOURNAL</div>
-                  {linkedEntries.map((en) => {
-                    const mi = moodInfo(en.mood);
-                    return (
-                      <div
-                        key={en.id}
-                        onClick={() => setViewEntryId(en.id)}
-                        style={{ background: COLORS.subtleBg, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "10px 12px", cursor: "pointer" }}
-                      >
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: (en.feelingDetail || en.notes) ? 4 : 0 }}>
-                          <span style={{ fontSize: 12.5, fontWeight: 700, color: mi.color }}>{mi.label}</span>
-                        </div>
-                        {(en.feelingDetail || en.notes) && (
-                          <div style={{ fontSize: 12.5, color: COLORS.text }}>
-                            {(en.feelingDetail || en.notes).slice(0, 140)}{(en.feelingDetail || en.notes).length > 140 ? "…" : ""}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-              <div style={{ display: "flex", gap: 10 }}>
-                <button
-                  onClick={() => { setViewTradeId(null); openEditTrade(t); }}
-                  style={{ ...primaryBtnStyle_(), flex: 1, textAlign: "center" }}
-                >
-                  ✎ Edit trade
-                </button>
-                <button
-                  onClick={() => { setViewTradeId(null); setMediaModalTradeId(t.id); }}
-                  style={{ ...ghostBtnStyle_(), flex: 1 }}
-                >
-                  📎 {(t.media || []).length ? `View ${(t.media || []).length} attachment${(t.media || []).length === 1 ? "" : "s"}` : "Add photos/videos"}
-                </button>
-              </div>
+              ))}
             </div>
-          </div>
+            {linkedEntries.length > 0 && (
+              <div style={{ marginBottom: 18, display: "grid", gap: 10 }}>
+                <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600 }}>JOURNAL</div>
+                {linkedEntries.map((en) => {
+                  const mi = moodInfo(en.mood);
+                  return (
+                    <div
+                      key={en.id}
+                      onClick={() => setViewEntryId(en.id)}
+                      style={{ background: COLORS.subtleBg, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "10px 12px", cursor: "pointer" }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: (en.feelingDetail || en.notes) ? 4 : 0 }}>
+                        <span style={{ fontSize: 12.5, fontWeight: 700, color: mi.color }}>{mi.label}</span>
+                      </div>
+                      {(en.feelingDetail || en.notes) && (
+                        <div style={{ fontSize: 12.5, color: COLORS.text }}>
+                          {(en.feelingDetail || en.notes).slice(0, 140)}{(en.feelingDetail || en.notes).length > 140 ? "…" : ""}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                onClick={() => { setViewTradeId(null); openEditTrade(t); }}
+                style={{ ...primaryBtnStyle_(), flex: 1, textAlign: "center" }}
+              >
+                ✎ Edit trade
+              </button>
+              <button
+                onClick={() => { setViewTradeId(null); setMediaModalTradeId(t.id); }}
+                style={{ ...ghostBtnStyle_(), flex: 1 }}
+              >
+                📎 {(t.media || []).length ? `View ${(t.media || []).length} attachment${(t.media || []).length === 1 ? "" : "s"}` : "Add photos/videos"}
+              </button>
+            </div>
+          </DraggablePopup>
         );
       })()}
 
@@ -4379,53 +4438,50 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           { label: "Linked trade", value: linkedTrade ? `#${tradeNumberMap.get(linkedTrade.id)} · ${fmtMoney(linkedTrade.pnl)}` : "—", color: linkedTrade ? pnlColor(linkedTrade) : null },
         ];
         return (
-          <div onClick={() => setViewEntryId(null)} style={{ position: "fixed", inset: 0, background: "rgba(20,20,35,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 55 }}>
-            <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.card, borderRadius: 16, padding: 24, width: "100%", maxWidth: 460, boxShadow: "0 20px 60px rgba(20,20,35,0.35)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
-                <div>
-                  <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600, marginBottom: 2 }}>JOURNAL ENTRY</div>
-                  <div style={{ fontSize: 20, fontWeight: 700, color: mi.color }}>{mi.label}</div>
+          <DraggablePopup
+            title="Journal entry"
+            onClose={() => setViewEntryId(null)}
+            defaultX={Math.max(60, window.innerWidth - 500)}
+            defaultY={140}
+          >
+            <div style={{ fontSize: 20, fontWeight: 700, color: mi.color, marginBottom: 18 }}>{mi.label}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 18 }}>
+              {fields.map((f) => (
+                <div key={f.label}>
+                  <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>{f.label.toUpperCase()}</div>
+                  <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: f.color || COLORS.text }}>{f.value}</div>
                 </div>
-                <button onClick={() => setViewEntryId(null)} style={deleteBtnStyle_()} aria-label="Close">✕</button>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 18 }}>
-                {fields.map((f) => (
-                  <div key={f.label}>
-                    <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>{f.label.toUpperCase()}</div>
-                    <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: f.color || COLORS.text }}>{f.value}</div>
-                  </div>
-                ))}
-              </div>
-              {en.feelingDetail && (
-                <div style={{ marginBottom: 14 }}>
-                  <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>WHAT WAS THE FEELING</div>
-                  <div style={{ fontSize: 13.5, color: COLORS.text, whiteSpace: "pre-wrap" }}>{en.feelingDetail}</div>
-                </div>
-              )}
-              {en.notes && (
-                <div style={{ marginBottom: 18 }}>
-                  <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>NOTES</div>
-                  <div style={{ fontSize: 13.5, color: COLORS.text, whiteSpace: "pre-wrap" }}>{en.notes}</div>
-                </div>
-              )}
-              <div style={{ display: "flex", gap: 10 }}>
-                {linkedTrade && (
-                  <button
-                    onClick={() => { setViewEntryId(null); setViewTradeId(linkedTrade.id); }}
-                    style={{ ...ghostBtnStyle_(), flex: 1 }}
-                  >
-                    View linked trade
-                  </button>
-                )}
-                <button
-                  onClick={() => { setViewEntryId(null); deleteEntry(en.id); }}
-                  style={{ ...deleteBtnStyle_(), flex: linkedTrade ? "0 0 auto" : 1, padding: "10px 16px" }}
-                >
-                  Delete entry
-                </button>
-              </div>
+              ))}
             </div>
-          </div>
+            {en.feelingDetail && (
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>WHAT WAS THE FEELING</div>
+                <div style={{ fontSize: 13.5, color: COLORS.text, whiteSpace: "pre-wrap" }}>{en.feelingDetail}</div>
+              </div>
+            )}
+            {en.notes && (
+              <div style={{ marginBottom: 18 }}>
+                <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>NOTES</div>
+                <div style={{ fontSize: 13.5, color: COLORS.text, whiteSpace: "pre-wrap" }}>{en.notes}</div>
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 10 }}>
+              {linkedTrade && (
+                <button
+                  onClick={() => { setViewEntryId(null); setViewTradeId(linkedTrade.id); }}
+                  style={{ ...ghostBtnStyle_(), flex: 1 }}
+                >
+                  View linked trade
+                </button>
+              )}
+              <button
+                onClick={() => { setViewEntryId(null); deleteEntry(en.id); }}
+                style={{ ...deleteBtnStyle_(), flex: linkedTrade ? "0 0 auto" : 1, padding: "10px 16px" }}
+              >
+                Delete entry
+              </button>
+            </div>
+          </DraggablePopup>
         );
       })()}
 
