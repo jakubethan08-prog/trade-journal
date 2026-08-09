@@ -2478,10 +2478,15 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       );
       const count = taggedTrades.length;
       const total = taggedTrades.reduce((s, t) => s + t.pnl, 0);
-      const wins = taggedTrades.filter((t) => t.pnl > 0).length;
+      const winningTrades = taggedTrades.filter((t) => t.pnl > 0);
+      const losingTrades = taggedTrades.filter((t) => t.pnl < 0);
+      const wins = winningTrades.length;
       const winRateP = count ? Math.round((wins / count) * 100) : 0;
-      const biggestWin = count ? Math.max(...taggedTrades.map((t) => t.pnl)) : null;
-      const biggestLoss = count ? Math.min(...taggedTrades.map((t) => t.pnl)) : null;
+      // Biggest win/loss only ever come from an actual winning/losing trade —
+      // if there are none of one kind (e.g. every trade in this pattern won),
+      // that figure is 0, not the closest-to-zero trade of the other kind.
+      const biggestWin = winningTrades.length ? Math.max(...winningTrades.map((t) => t.pnl)) : 0;
+      const biggestLoss = losingTrades.length ? Math.min(...losingTrades.map((t) => t.pnl)) : 0;
       const pointsTotal = confIds.reduce((s, id) => s + (Number(confluenceNameToPointsById[id]) || 0), 0)
         + tagIds.reduce((s, id) => s + (Number(targetTagValueById[id]) || 0), 0);
       const autoGrade = computeAutoGrade(pointsTotal, targets.gradeThresholds);
