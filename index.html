@@ -2222,6 +2222,16 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     setSaveError(null);
   }
 
+  // The single entry point for "a trade was clicked" anywhere in the app —
+  // always shows the trade's own popup together with its linked journal
+  // entry's popup (if any), in one click, instead of requiring a second
+  // click to also see the journal side.
+  function openTradeView(tradeId) {
+    setViewTradeId(tradeId);
+    const linked = entries.find((en) => en.tradeId === tradeId);
+    setViewEntryId(linked ? linked.id : null);
+  }
+
   function openEditTrade(t) {
     setEditingTradeId(t.id);
     const hms = secondsToHMS(t.duration);
@@ -2511,6 +2521,12 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const bestConfluencePattern = patternPerf.length
     ? [...patternPerf].sort((a, b) => b.total - a.total)[0]
     : null;
+  // A trade's displayed grade should always be its pattern's live
+  // auto-grade, not the stale `grade` column on the trade itself (left
+  // over from the old manual-grade flow, which can go stale as confluence
+  // points/thresholds change).
+  const tradeAutoGradeById = {};
+  patternPerf.forEach((p) => { p.trades.forEach((t) => { tradeAutoGradeById[t.id] = p.autoGrade; }); });
 
   // ---- Calendar: group trades by date, build week rows with a trailing Total column ----
   const dayMap = trades.reduce((acc, t) => {
@@ -3043,7 +3059,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                         </thead>
                         <tbody>
                           {sorted.map((t) => (
-                            <tr key={t.id} onClick={() => setViewTradeId(t.id)} style={{ borderBottom: `1px solid ${COLORS.border}`, cursor: "pointer" }}>
+                            <tr key={t.id} onClick={() => openTradeView(t.id)} style={{ borderBottom: `1px solid ${COLORS.border}`, cursor: "pointer" }}>
                               <td className="mono" style={{ padding: "10px 14px", color: COLORS.textMuted, whiteSpace: "nowrap" }}>#{tradeNumberMap.get(t.id)}</td>
                               <td className="mono" style={{ padding: "10px 14px", color: COLORS.textMuted, whiteSpace: "nowrap" }}>{t.date}</td>
                               {!isPayoutView && (
@@ -3066,13 +3082,13 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                                   </td>
                                   <td className="mono" style={{ padding: "10px 14px", color: COLORS.textMuted, whiteSpace: "nowrap" }}>{fmtDuration(t.duration)}</td>
                                   <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
-                                    {t.grade ? (
+                                    {tradeAutoGradeById[t.id] ? (
                                       <span className="mono" style={{
                                         fontSize: 11.5, fontWeight: 700, padding: "2px 9px", borderRadius: 6,
-                                        color: gradeColor(t.grade), background: gradeColor(t.grade) + "18",
-                                        border: `1px solid ${gradeColor(t.grade)}40`,
+                                        color: gradeColor(tradeAutoGradeById[t.id]), background: gradeColor(tradeAutoGradeById[t.id]) + "18",
+                                        border: `1px solid ${gradeColor(tradeAutoGradeById[t.id])}40`,
                                       }}>
-                                        {t.grade}
+                                        {tradeAutoGradeById[t.id]}
                                       </span>
                                     ) : "—"}
                                   </td>
@@ -3389,7 +3405,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                           return (
                             <div key={t.id} style={{ background: COLORS.subtleBg, borderRadius: 8, padding: "6px 10px" }}>
                               <div
-                                onClick={() => setViewTradeId(t.id)}
+                                onClick={() => openTradeView(t.id)}
                                 className="mono"
                                 style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: 12, cursor: "pointer" }}
                               >
@@ -3468,7 +3484,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                             {p.trades.map((t) => (
                               <div
                                 key={t.id}
-                                onClick={() => setViewTradeId(t.id)}
+                                onClick={() => openTradeView(t.id)}
                                 className="mono"
                                 style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: 12, padding: "6px 10px", background: COLORS.subtleBg, borderRadius: 8, cursor: "pointer" }}
                               >
@@ -3982,7 +3998,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                           </span>
                           {linkedTrade && (
                             <button
-                              onClick={() => setViewTradeId(linkedTrade.id)}
+                              onClick={() => openTradeView(linkedTrade.id)}
                               style={{ fontSize: 11, color: COLORS.accent, border: `1px solid ${COLORS.accent}33`, background: COLORS.accentSoft, padding: "2px 9px", borderRadius: 20, fontWeight: 600, cursor: "pointer" }}
                             >
                               🔗 {tradeLabel(linkedTrade)}
@@ -4052,7 +4068,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                     );
                   }
                   return (
-                    <div key={t.id} style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12 }}>
+                    <div key={t.id} onClick={() => openTradeView(t.id)} style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12, cursor: "pointer" }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           <span className="mono" style={{ fontSize: 11, color: COLORS.textMuted }}>#{tradeNumberMap.get(t.id)}</span>
@@ -4067,13 +4083,13 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                         <span>{fmtDuration(t.duration)}</span>
                         {t.risk !== null && t.risk !== undefined && <span>Risk {t.risk}%</span>}
                         {t.rr !== null && t.rr !== undefined && <span>{t.rr}R</span>}
-                        {t.grade && (
-                          <span style={{ color: gradeColor(t.grade), background: gradeColor(t.grade) + "18", border: `1px solid ${gradeColor(t.grade)}40`, borderRadius: 6, padding: "1px 7px", fontWeight: 700 }}>
-                            {t.grade}
+                        {tradeAutoGradeById[t.id] && (
+                          <span style={{ color: gradeColor(tradeAutoGradeById[t.id]), background: gradeColor(tradeAutoGradeById[t.id]) + "18", border: `1px solid ${gradeColor(tradeAutoGradeById[t.id])}40`, borderRadius: 6, padding: "1px 7px", fontWeight: 700 }}>
+                            {tradeAutoGradeById[t.id]}
                           </span>
                         )}
                         <button
-                          onClick={() => setMediaModalTradeId(t.id)}
+                          onClick={(e) => { e.stopPropagation(); setMediaModalTradeId(t.id); }}
                           style={{
                             display: "inline-flex", alignItems: "center", gap: 4,
                             background: (t.media || []).length ? COLORS.accentSoft : "transparent",
@@ -4277,6 +4293,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           .map((l) => { const tg = targetTagsList.find((x) => x.id === l.target_tag_id); return tg ? tg.name : null; })
           .filter(Boolean);
         const linkedEntries = entries.filter((en) => en.tradeId === t.id);
+        const liveGrade = tradeAutoGradeById[t.id] || null;
         const fields = [
           { label: "Date", value: t.date },
           { label: "Symbol", value: t.symbol || "—" },
@@ -4285,7 +4302,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           { label: "Duration", value: fmtDuration(t.duration) },
           { label: "Risk", value: t.risk !== null && t.risk !== undefined ? `${t.risk}%` : "—" },
           { label: "R:R", value: t.rr !== null && t.rr !== undefined ? `${t.rr}R` : "—" },
-          { label: "Grade", value: t.grade || "—", color: t.grade ? gradeColor(t.grade) : null },
+          { label: "Grade", value: liveGrade || "—", color: liveGrade ? gradeColor(liveGrade) : null },
           { label: "Confluences", value: tradeConfluenceNames.length ? tradeConfluenceNames.join(", ") : "—" },
           { label: "Targets", value: tradeTargetTagNames.length ? tradeTargetTagNames.join(", ") : "—" },
         ];
