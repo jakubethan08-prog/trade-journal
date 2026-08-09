@@ -1100,3 +1100,44 @@ as $$
   order by f.created_at desc;
 $$;
 grant execute on function public.get_all_feedback() to authenticated;
+
+-- =========================================================================
+-- Leaderboard time periods — 1 day / 1 week / 1 month / all time. Replaces
+-- the original zero-argument get_leaderboard() with a one-argument version
+-- (p_period, defaulting to 'all' so existing zero-arg callers still work);
+-- the old zero-arg function is dropped first since Postgres treats a
+-- different argument list as a distinct, separately-overloaded function
+-- rather than something `create or replace` would replace in place, and
+-- leaving both around would make a plain get_leaderboard() call ambiguous.
+-- =========================================================================
+drop function if exists public.get_leaderboard();
+
+create or replace function public.get_leaderboard(p_period text default 'all')
+returns table (user_id uuid, display_name text, total_pnl numeric, win_rate int, trade_count int)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select
+    p.id as user_id,
+    coalesce(p.display_name, p.email, 'Trader') as display_name,
+    coalesce(sum(t.pnl) filter (where t.entry_type <> 'payout'), 0) as total_pnl,
+    case when count(t.id) filter (where t.entry_type <> 'payout') > 0
+      then round(100.0 * count(t.id) filter (where t.entry_type <> 'payout' and t.pnl > 0) / count(t.id) filter (where t.entry_type <> 'payout'))
+      else 0
+    end::int as win_rate,
+    count(t.id) filter (where t.entry_type <> 'payout')::int as trade_count
+  from public.profiles p
+  left join public.trades t on t.user_id = p.id
+    and (
+      p_period = 'all'
+      or (p_period = 'day' and t.date = current_date)
+      or (p_period = 'week' and t.date >= current_date - 6)
+      or (p_period = 'month' and t.date >= current_date - 29)
+    )
+  where p.leaderboard_opt_in = true
+  group by p.id, p.display_name, p.email
+  order by total_pnl desc;
+$$;
+grant execute on function public.get_leaderboard(text) to authenticated;

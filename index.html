@@ -1509,6 +1509,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const [leaderboardList, setLeaderboardList] = useState([]);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
   const [leaderboardError, setLeaderboardError] = useState(null);
+  const [leaderboardPeriod, setLeaderboardPeriod] = useState("all"); // 'all' | 'day' | 'week' | 'month'
 
   // ---- Load this user's data from Supabase on mount ----
   async function reloadAllData() {
@@ -2271,10 +2272,10 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     if (next) loadLeaderboard();
   }
 
-  async function loadLeaderboard() {
+  async function loadLeaderboard(period) {
     setLeaderboardLoading(true);
     setLeaderboardError(null);
-    const { data, error } = await supabaseClient.rpc("get_leaderboard");
+    const { data, error } = await supabaseClient.rpc("get_leaderboard", { p_period: period || leaderboardPeriod });
     setLeaderboardLoading(false);
     if (error) { setLeaderboardError("Couldn't load the leaderboard — try again."); return; }
     setLeaderboardList(data || []);
@@ -2282,7 +2283,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
 
   useEffect(() => {
     if (tab === "leaderboard") loadLeaderboard();
-  }, [tab]);
+  }, [tab, leaderboardPeriod]);
 
   const acceptedFriends = friendships.filter((f) => f.status === "accepted");
   const friendshipsKey = friendships.map((f) => `${f.id}:${f.status}`).join(",");
@@ -4179,6 +4180,23 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               >
                 {leaderboardOptIn ? "Opted in ✓" : "Opt in"}
               </button>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+              {[
+                { key: "all", label: "All time" },
+                { key: "day", label: "1 Day" },
+                { key: "week", label: "1 Week" },
+                { key: "month", label: "1 Month" },
+              ].map((opt) => (
+                <button
+                  key={opt.key}
+                  onClick={() => setLeaderboardPeriod(opt.key)}
+                  style={leaderboardPeriod === opt.key ? primaryBtnStyle_() : ghostBtnStyle_()}
+                >
+                  {opt.label}
+                </button>
+              ))}
             </div>
 
             {leaderboardError && (
