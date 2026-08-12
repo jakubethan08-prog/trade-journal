@@ -2905,11 +2905,21 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const longCount = tradingOnly.length - shortCount;
   const dominantDirection = tradingOnly.length === 0 ? null : (shortCount > longCount ? "Short" : "Long");
 
+  // Drawdown should reflect actual trading performance, not withdrawals —
+  // a payout would otherwise show up as a fake "loss" dip. Recompute a
+  // trading-only running balance over the same dates as equityCurve (whose
+  // first point is a synthetic "day before start" placeholder at 0).
   const drawdownCurve = (() => {
+    const dayPnlTradingOnly = {};
+    chronoTrades.forEach((t) => {
+      if (t.entryType !== "payout") dayPnlTradingOnly[t.date] = (dayPnlTradingOnly[t.date] || 0) + t.pnl;
+    });
+    let running = 0;
     let peak = 0;
-    return equityCurve.map((p) => {
-      peak = Math.max(peak, p.balance);
-      return { date: p.date, value: p.balance - peak };
+    return equityCurve.map((p, i) => {
+      if (i > 0) running += dayPnlTradingOnly[p.date] || 0;
+      peak = Math.max(peak, running);
+      return { date: p.date, value: running - peak };
     });
   })();
 
