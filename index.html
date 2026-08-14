@@ -2655,8 +2655,11 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
 
   const moodInfo = (key) => MOODS.find((m) => m.key === key) || MOODS[MOODS.length - 1];
 
+  // Payouts don't consume a trade number — only real trades count, so the
+  // sequence stays consecutive across any payouts logged in between.
   const tradeNumberMap = new Map(
     [...trades]
+      .filter((t) => t.entryType !== "payout")
       .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.id < b.id ? -1 : 1)))
       .map((t, i) => [t.id, i + 1])
   );
@@ -3373,7 +3376,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                         <tbody>
                           {sorted.map((t) => (
                             <tr key={t.id} onClick={() => openTradeView(t.id)} style={{ borderBottom: `1px solid ${COLORS.border}`, cursor: "pointer" }}>
-                              <td className="mono" style={{ padding: "10px 14px", color: COLORS.textMuted, whiteSpace: "nowrap" }}>#{tradeNumberMap.get(t.id)}</td>
+                              <td className="mono" style={{ padding: "10px 14px", color: COLORS.textMuted, whiteSpace: "nowrap" }}>{t.entryType === "payout" ? "—" : `#${tradeNumberMap.get(t.id)}`}</td>
                               <td className="mono" style={{ padding: "10px 14px", color: COLORS.textMuted, whiteSpace: "nowrap" }}>{t.date}</td>
                               {!isPayoutView && (
                                 <>
@@ -4391,7 +4394,9 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               <EmptyState text="No journal entries yet. Write your first one above." />
             ) : (
               <div style={{ display: "grid", gap: 10 }}>
-                {entries.map((en) => {
+                {[...entries]
+                  .sort((a, b) => (tradeNumberMap.get(b.tradeId) || -1) - (tradeNumberMap.get(a.tradeId) || -1))
+                  .map((en) => {
                   const mi = moodInfo(en.mood);
                   const linkedTrade = en.tradeId ? findTrade(en.tradeId) : null;
                   return (
@@ -4777,7 +4782,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
         ];
         return (
           <DraggablePopup
-            title={`Trade #${tradeNumberMap.get(t.id)}`}
+            title={t.entryType === "payout" ? "Payout" : `Trade #${tradeNumberMap.get(t.id)}`}
             onClose={() => setViewTradeId(null)}
             defaultX={40}
             defaultY={70}
