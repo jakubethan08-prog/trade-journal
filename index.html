@@ -2757,7 +2757,8 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     // trades actually matching its exact combination — e.g. one left behind
     // after every trade that had it was edited to remove the tag, or a
     // payout (which never counts toward pattern stats) was tagged with it.
-    .filter((p) => p.count > 0);
+    .filter((p) => p.count > 0)
+    .sort((a, b) => b.winRateP - a.winRateP);
   const bestConfluencePattern = patternPerf.length
     ? [...patternPerf].sort((a, b) => b.total - a.total)[0]
     : null;
