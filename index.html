@@ -2758,7 +2758,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     // after every trade that had it was edited to remove the tag, or a
     // payout (which never counts toward pattern stats) was tagged with it.
     .filter((p) => p.count > 0)
-    .sort((a, b) => b.winRateP - a.winRateP);
+    .sort((a, b) => b.winRateP - a.winRateP || (GRADE_RANK[b.autoGrade] ?? -1) - (GRADE_RANK[a.autoGrade] ?? -1));
   const bestConfluencePattern = patternPerf.length
     ? [...patternPerf].sort((a, b) => b.total - a.total)[0]
     : null;
