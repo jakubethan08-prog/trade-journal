@@ -2833,6 +2833,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     const start = new Date();
     if (preset === "1d") start.setDate(end.getDate() - 1);
     else if (preset === "1w") start.setDate(end.getDate() - 7);
+    else if (preset === "2w") start.setDate(end.getDate() - 14);
     else if (preset === "1m") start.setMonth(end.getMonth() - 1);
     else if (preset === "6m") start.setMonth(end.getMonth() - 6);
     else if (preset === "1y") start.setFullYear(end.getFullYear() - 1);
@@ -3451,7 +3452,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               <StatCard label="Win rate" value={`${winRate}%`} />
               <StatCard label="Profit factor" value={profitFactor === Infinity ? "∞" : profitFactor.toFixed(2)} />
               <StatCard label="Avg duration" value={fmtDuration(avgDuration)} />
-              <StatCard label="Avg R:R" value={avgRR === null ? "—" : `${avgRR.toFixed(2)}R`} />
+              <StatCard label="Avg R:R" value={avgRR === null ? "—" : avgRR.toFixed(2)} />
             </div>
 
             <div className="perf-top" style={{ marginBottom: 28 }}>
@@ -3509,6 +3510,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                     <option value="">Custom</option>
                     <option value="1d">1 Day</option>
                     <option value="1w">1 Week</option>
+                    <option value="2w">2 Weeks</option>
                     <option value="1m">1 Month</option>
                     <option value="6m">6 Months</option>
                     <option value="1y">1 Year</option>
