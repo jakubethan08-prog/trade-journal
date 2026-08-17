@@ -1202,6 +1202,7 @@ function DraggablePopup({ title, onClose, children, defaultX, defaultY, width = 
     y: Math.min(Math.max(20, defaultY), Math.max(20, window.innerHeight - 100)),
   }));
   const dragRef = useRef(null);
+  const nodeRef = useRef(null);
 
   useEffect(() => {
     function handleMove(e) {
@@ -1222,12 +1223,21 @@ function DraggablePopup({ title, onClose, children, defaultX, defaultY, width = 
     };
   }, []);
 
+  useEffect(() => {
+    function handleOutside(e) {
+      if (nodeRef.current && !nodeRef.current.contains(e.target)) onClose();
+    }
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, [onClose]);
+
   function startDrag(e) {
     dragRef.current = { offsetX: e.clientX - pos.x, offsetY: e.clientY - pos.y };
   }
 
   return (
     <div
+      ref={nodeRef}
       style={{
         position: "fixed", left: pos.x, top: pos.y, zIndex: 55, width,
         maxWidth: "calc(100vw - 40px)", maxHeight: "85vh", overflowY: "auto",
@@ -4456,6 +4466,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                         <span>Total P&L <span style={{ fontWeight: 700, color: row.total_pnl >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(row.total_pnl)}</span></span>
                         <span>Win rate <span style={{ fontWeight: 700, color: COLORS.text }}>{row.win_rate}%</span></span>
                         <span>{row.trade_count} trade{row.trade_count === 1 ? "" : "s"}</span>
+                        {formatAccounts(row.account_count, row.account_size) && <span>{formatAccounts(row.account_count, row.account_size)}</span>}
                       </div>
                     </div>
                   );

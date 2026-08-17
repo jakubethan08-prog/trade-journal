@@ -1175,3 +1175,54 @@ alter table public.profiles drop constraint if exists profiles_account_size_chec
 alter table public.profiles add constraint profiles_account_size_check
   check (account_size is null or account_size in (25000, 50000, 100000, 150000));
 grant update (account_count, account_size) on public.profiles to authenticated;
+
+-- Surface account_count/account_size on the leaderboard too. Postgres
+-- won't let `create or replace` change a function's return columns, so
+-- the old shape has to be dropped first.
+drop function if exists public.get_leaderboard(text);
+
+create or replace function public.get_leaderboard(p_period text default 'all')
+returns table (user_id uuid, display_name text, total_pnl numeric, win_rate int, trade_count int, account_count numeric, account_size integer)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  with trade_totals as (
+    select
+      t.user_id,
+      case
+        when p_period = 'day' then t.date::text
+        when p_period = 'week' then date_trunc('week', t.date)::text
+        when p_period = 'month' then date_trunc('month', t.date)::text
+        else 'all'
+      end as bucket,
+      sum(t.pnl) filter (where t.entry_type <> 'payout') as bucket_pnl,
+      count(t.id) filter (where t.entry_type <> 'payout') as bucket_count,
+      count(t.id) filter (where t.entry_type <> 'payout' and t.pnl > 0) as bucket_wins
+    from public.trades t
+    group by t.user_id, bucket
+  ),
+  best_bucket as (
+    select distinct on (user_id)
+      user_id, bucket_pnl, bucket_count, bucket_wins
+    from trade_totals
+    order by user_id, bucket_pnl desc nulls last
+  )
+  select
+    p.id as user_id,
+    coalesce(p.display_name, p.email, 'Trader') as display_name,
+    coalesce(bb.bucket_pnl, 0) as total_pnl,
+    case when coalesce(bb.bucket_count, 0) > 0
+      then round(100.0 * bb.bucket_wins / bb.bucket_count)
+      else 0
+    end::int as win_rate,
+    coalesce(bb.bucket_count, 0)::int as trade_count,
+    p.account_count,
+    p.account_size
+  from public.profiles p
+  left join best_bucket bb on bb.user_id = p.id
+  where p.leaderboard_opt_in = true
+  order by total_pnl desc;
+$$;
+grant execute on function public.get_leaderboard(text) to authenticated;
