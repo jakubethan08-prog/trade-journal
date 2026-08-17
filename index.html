@@ -1591,7 +1591,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       supabaseClient.from("pattern_target_tags").select("*"),
       supabaseClient.from("target_tags").select("*").order("name", { ascending: true }),
       supabaseClient.from("trade_target_tags").select("*"),
-      supabaseClient.from("profiles").select("leaderboard_opt_in").eq("id", userId).maybeSingle(),
+      supabaseClient.from("profiles").select("leaderboard_opt_in, account_count, account_size").eq("id", userId).maybeSingle(),
       isFeedbackAdmin
         ? supabaseClient.rpc("get_all_feedback")
         : supabaseClient.from("feedback").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
@@ -1630,6 +1630,8 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     setTargetTagsList(targetTagsRes.data || []);
     setTradeTargetTagLinks(tradeTargetTagsRes.data || []);
     setLeaderboardOptIn(!!(ownProfileRes.data && ownProfileRes.data.leaderboard_opt_in));
+    setAccountCount(ownProfileRes.data ? ownProfileRes.data.account_count : null);
+    setAccountSize(ownProfileRes.data ? ownProfileRes.data.account_size : null);
     setPastFeedback(feedbackRes.data || []);
   }
 
@@ -1660,7 +1662,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       const otherIds = Array.from(new Set((rows || []).map((r) => (r.requester_id === userId ? r.addressee_id : r.requester_id))));
       let profilesById = {};
       if (otherIds.length) {
-        const { data: profs, error: profErr } = await supabaseClient.from("profiles").select("id, email, display_name").in("id", otherIds);
+        const { data: profs, error: profErr } = await supabaseClient.from("profiles").select("id, email, display_name, account_count, account_size").in("id", otherIds);
         if (profErr) throw profErr;
         profilesById = Object.fromEntries((profs || []).map((p) => [p.id, p]));
       }
@@ -2338,6 +2340,20 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     if (next) loadLeaderboard();
   }
 
+  async function updateAccountSettings(count, size) {
+    setAccountCount(count);
+    setAccountSize(size);
+    setAccountsSaving(true);
+    const { error } = await supabaseClient.from("profiles").update({ account_count: count, account_size: size }).eq("id", userId);
+    setAccountsSaving(false);
+    if (error) setSaveError("Couldn't save your accounts setting.");
+  }
+  function formatAccounts(count, size) {
+    if (!count || !size) return null;
+    const countLabel = Number.isInteger(count) ? String(count) : count.toFixed(1);
+    return `${countLabel} ${size / 1000}k`;
+  }
+
   async function loadLeaderboard(period) {
     setLeaderboardLoading(true);
     setLeaderboardError(null);
@@ -2418,9 +2434,13 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       );
       return;
     }
+    // Accounts multiplier applies to real trades only, using whatever the
+    // setting is RIGHT NOW — baked into the saved P&L at creation time, so
+    // changing the setting later never touches trades already logged.
+    const accountsMultiplier = tEntryType === "trade" && accountCount ? accountCount : 1;
     const draft = {
       date: tDate,
-      pnl: tEntryType === "payout" ? -Math.abs(Number(tPnl)) : Number(tPnl),
+      pnl: tEntryType === "payout" ? -Math.abs(Number(tPnl)) : Number(tPnl) * accountsMultiplier,
       duration: (Number(tDurH) || 0) * 3600 + (Number(tDurM) || 0) * 60 + (Number(tDurS) || 0),
       symbol: tSymbol.trim(),
       side: tSide, risk: tRisk === "" ? null : Number(tRisk), rr: tRR === "" ? null : Number(tRR), grade: tGrade || null, entryType: tEntryType,
@@ -3205,6 +3225,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                 {acceptedFriends.map((f) => {
                   const stats = friendStats[f.otherId];
                   const label = (f.otherProfile && (f.otherProfile.display_name || f.otherProfile.email)) || "Unknown";
+                  const friendAccounts = f.otherProfile ? formatAccounts(f.otherProfile.account_count, f.otherProfile.account_size) : null;
                   return (
                     <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
                       <div style={{ fontSize: 14, fontWeight: 700 }}>{label}</div>
@@ -3213,6 +3234,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                           <span>Total P&L: <span style={{ fontWeight: 700, color: stats.totalPnl >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(stats.totalPnl)}</span></span>
                           <span>Win rate: <span style={{ fontWeight: 700 }}>{stats.winRate}%</span></span>
                           <span style={{ color: COLORS.textMuted }}>{stats.tradeCount} trade{stats.tradeCount === 1 ? "" : "s"}</span>
+                          {friendAccounts && <span style={{ color: COLORS.textMuted }}>{friendAccounts}</span>}
                           <button onClick={() => openFriendPerformance(f)} style={{ ...ghostBtnStyle_(), fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif" }}>View performance</button>
                         </div>
                       ) : (
@@ -3226,8 +3248,49 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           </>
         ) : tab === "trades" ? (
           <>
-            <form onSubmit={addTrade} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
-              <div style={{ fontSize: 13, color: COLORS.text, fontWeight: 700 }}>Log a trade</div>
+            <form onSubmit={addTrade} style={{ position: "relative", background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+              <button
+                type="button"
+                onClick={() => setAccountsPopoverOpen((o) => !o)}
+                title="Multiply each new trade's P&L by an account count"
+                style={{ ...ghostBtnStyle_(), position: "absolute", top: 16, right: 16, padding: "6px 14px", fontSize: 12, borderRadius: 20 }}
+              >
+                {formatAccounts(accountCount, accountSize) || "Accounts"}
+              </button>
+              {accountsPopoverOpen && (
+                <div style={{ position: "absolute", top: 52, right: 16, zIndex: 20, background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 16, boxShadow: "0 10px 30px rgba(20,20,35,0.3)", display: "grid", gap: 10, width: 220 }}>
+                  <Field label="Number of accounts">
+                    <input
+                      type="number" step="0.1" min="0"
+                      value={accountCount === null || accountCount === undefined ? "" : accountCount}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        const v = raw === "" ? null : Math.round(Number(raw) * 10) / 10;
+                        updateAccountSettings(v, accountSize);
+                      }}
+                      placeholder="e.g. 5"
+                      style={inputStyle_()}
+                    />
+                  </Field>
+                  <Field label="Account size">
+                    <select
+                      value={accountSize || ""}
+                      onChange={(e) => updateAccountSettings(accountCount, e.target.value ? Number(e.target.value) : null)}
+                      style={inputStyle_()}
+                    >
+                      <option value="">—</option>
+                      {ACCOUNT_SIZES.map((s) => <option key={s} value={s}>{s / 1000}k</option>)}
+                    </select>
+                  </Field>
+                  <div style={{ fontSize: 11, color: COLORS.textMuted }}>
+                    Multiplies each new trade's P&L by this count (not payouts). Changing this never affects trades already logged — only ones you add from now on.
+                  </div>
+                  <button type="button" onClick={() => setAccountsPopoverOpen(false)} style={{ ...primaryBtnStyle_(), justifySelf: "stretch", textAlign: "center" }}>
+                    {accountsSaving ? "Saving…" : "Done"}
+                  </button>
+                </div>
+              )}
+              <div style={{ fontSize: 13, color: COLORS.text, fontWeight: 700, paddingRight: 100 }}>Log a trade</div>
               <div style={{ display: "flex", gap: 6 }}>
                 {[{ v: "trade", label: "Trade" }, { v: "payout", label: "Payouts" }].map((opt) => (
                   <button

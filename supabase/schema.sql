@@ -1159,3 +1159,19 @@ as $$
   order by total_pnl desc;
 $$;
 grant execute on function public.get_leaderboard(text) to authenticated;
+
+-- =========================================================================
+-- Accounts — an optional "N accounts of size X" setting (e.g. a prop-firm
+-- trader running the same trade across several funded accounts at once).
+-- The app multiplies a new TRADE's entered P&L by account_count at the
+-- moment it's logged (never payouts, never retroactive to older trades —
+-- that's enforced client-side, not here). Already visible to friends via
+-- the existing "select friend profiles" policy since it's just more
+-- columns on profiles, not a new access grant.
+-- =========================================================================
+alter table public.profiles add column if not exists account_count numeric;
+alter table public.profiles add column if not exists account_size integer;
+alter table public.profiles drop constraint if exists profiles_account_size_check;
+alter table public.profiles add constraint profiles_account_size_check
+  check (account_size is null or account_size in (25000, 50000, 100000, 150000));
+grant update (account_count, account_size) on public.profiles to authenticated;
