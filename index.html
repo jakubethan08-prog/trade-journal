@@ -447,6 +447,60 @@ function TradeMediaModal({ trade, onClose, onAddFiles, onDeleteMedia }) {
   );
 }
 
+// All media across every trade, newest trade number first, in an evenly
+// spaced grid — click a tile to open that trade's info popup.
+function AllMediaGrid({ items, onOpenTrade }) {
+  const [urls, setUrls] = useState({});
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const next = {};
+      for (const it of items) {
+        try {
+          next[it.media.id] = await getMediaSignedUrl(it.media.storagePath);
+        } catch (e) { /* skip missing file */ }
+      }
+      if (!cancelled) { setUrls(next); setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [items.map((it) => it.media.id).join(",")]);
+
+  if (loading) {
+    return <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "20px 0" }}>Loading…</div>;
+  }
+  if (items.length === 0) {
+    return <EmptyState text="No photos or videos attached to any trade yet." />;
+  }
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
+      {items.map(({ media: m, trade: t, number }) => (
+        <div
+          key={m.id}
+          onClick={() => onOpenTrade(t.id)}
+          style={{ position: "relative", borderRadius: 10, overflow: "hidden", border: `1px solid ${COLORS.border}`, background: "#000", aspectRatio: "1 / 1", cursor: "pointer" }}
+        >
+          {urls[m.id] ? (
+            m.type === "video" ? (
+              <video src={urls[m.id]} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted />
+            ) : (
+              <img src={urls[m.id]} alt={m.name || "trade media"} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            )
+          ) : (
+            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.textMuted, fontSize: 11 }}>Unavailable</div>
+          )}
+          <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "16px 8px 6px", background: "linear-gradient(to top, rgba(0,0,0,0.75), transparent)", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+            <span className="mono" style={{ fontSize: 11, fontWeight: 700, color: "#fff" }}>#{number}</span>
+            <span className="mono" style={{ fontSize: 11, fontWeight: 700, color: t.pnl >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(t.pnl)}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ---- Icons (small inline SVGs, stable module-scope components) ----
 function IconTrades({ active }) {
   return (
@@ -2675,6 +2729,10 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   );
 
   const linkableTrades = [...trades].sort((a, b) => (a.date < b.date ? 1 : -1));
+  const allMediaItems = trades
+    .filter((t) => t.entryType !== "payout")
+    .flatMap((t) => (t.media || []).map((m) => ({ media: m, trade: t, number: tradeNumberMap.get(t.id) })))
+    .sort((a, b) => (b.number || 0) - (a.number || 0));
   function tradeLabel(t) {
     return `#${tradeNumberMap.get(t.id)} · ${t.date} · ${t.symbol || "—"} · ${fmtMoney(t.pnl)}`;
   }
@@ -3455,6 +3513,9 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               })()
               );
             })()}
+
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, marginTop: 28 }}>Media</div>
+            <AllMediaGrid items={allMediaItems} onOpenTrade={openTradeView} />
           </>
         ) : tab === "calendar" ? (
           <>
