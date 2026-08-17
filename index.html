@@ -3066,7 +3066,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     { key: "dashboard", label: "Dashboard", Icon: IconDashboard },
     { key: "calendar", label: "Performance", Icon: IconCalendar },
     { key: "patterns", label: "Patterns", Icon: IconPatterns },
-    { key: "trades", label: "Trades", Icon: IconTrades },
+    { key: "media", label: "Trades", Icon: IconTrades },
     { key: "journal", label: "Journal", Icon: IconJournal },
     { key: "friends", label: "Friends", Icon: IconFriends },
     { key: "leaderboard", label: "Leaderboard", Icon: IconLeaderboard },
@@ -3168,10 +3168,10 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
         <header style={{ marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
           <div>
             <h1 style={{ fontSize: 24, margin: 0, fontWeight: 700, letterSpacing: "-0.01em" }}>
-              {tab === "dashboard" ? "Dashboard" : tab === "trades" ? "Trades" : tab === "calendar" ? "Performance" : tab === "patterns" ? "Patterns" : tab === "friends" ? "Friends" : tab === "leaderboard" ? "Leaderboard" : tab === "feedback" ? "Feedback" : tab === "settings" ? "Settings" : "Journal"}
+              {tab === "dashboard" ? "Dashboard" : tab === "trades" ? "Add Trade" : tab === "media" ? "Trades" : tab === "calendar" ? "Performance" : tab === "patterns" ? "Patterns" : tab === "friends" ? "Friends" : tab === "leaderboard" ? "Leaderboard" : tab === "feedback" ? "Feedback" : tab === "settings" ? "Settings" : "Journal"}
             </h1>
             <div style={{ fontSize: 13, color: COLORS.textMuted, marginTop: 2 }}>
-              {tab === "dashboard" ? "Your performance and your friends'" : tab === "trades" ? "Log and review every trade" : tab === "calendar" ? "Account growth and daily/weekly P&L" : tab === "patterns" ? "How you perform by how you felt" : tab === "friends" ? "See each other's trades" : tab === "leaderboard" ? "See how you rank, opt-in only" : tab === "feedback" ? "Tell us what to build next" : tab === "settings" ? "Targets and appearance" : "Track how you felt and why"}
+              {tab === "dashboard" ? "Your performance and your friends'" : tab === "trades" ? "Log and review every trade" : tab === "media" ? "Every photo and video, across every trade" : tab === "calendar" ? "Account growth and daily/weekly P&L" : tab === "patterns" ? "How you perform by how you felt" : tab === "friends" ? "See each other's trades" : tab === "leaderboard" ? "See how you rank, opt-in only" : tab === "feedback" ? "Tell us what to build next" : tab === "settings" ? "Targets and appearance" : "Track how you felt and why"}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
@@ -3586,7 +3586,9 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               );
             })()}
 
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, marginTop: 28 }}>Media</div>
+          </>
+        ) : tab === "media" ? (
+          <>
             <AllMediaGrid items={allMediaItems} onOpenTrade={openTradeView} />
           </>
         ) : tab === "calendar" ? (
