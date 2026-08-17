@@ -1513,6 +1513,16 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const [leaderboardError, setLeaderboardError] = useState(null);
   const [leaderboardPeriod, setLeaderboardPeriod] = useState("all"); // 'all' | 'day' | 'week' | 'month'
 
+  // ---- Accounts: optional "N accounts of size X" multiplier applied to a
+  // trade's P&L at the moment it's logged (never retroactive, never
+  // applied to payouts) — for traders running the same trade across
+  // multiple funded accounts at once. ----
+  const ACCOUNT_SIZES = [25000, 50000, 100000, 150000];
+  const [accountCount, setAccountCount] = useState(null);
+  const [accountSize, setAccountSize] = useState(null);
+  const [accountsPopoverOpen, setAccountsPopoverOpen] = useState(false);
+  const [accountsSaving, setAccountsSaving] = useState(false);
+
   // ---- Load this user's data from Supabase on mount ----
   async function reloadAllData() {
     const [tradesRes, entriesRes, targetsRes, mediaRes, confluencesRes, tradeConfluencesRes, patternsRes, patternConfluencesRes, patternTargetTagsRes, targetTagsRes, tradeTargetTagsRes, ownProfileRes, feedbackRes] = await Promise.all([
@@ -2969,6 +2979,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     { key: "dashboard", label: "Dashboard", Icon: IconDashboard },
     { key: "calendar", label: "Performance", Icon: IconCalendar },
     { key: "patterns", label: "Patterns", Icon: IconPatterns },
+    { key: "trades", label: "Trades", Icon: IconTrades },
     { key: "journal", label: "Journal", Icon: IconJournal },
     { key: "friends", label: "Friends", Icon: IconFriends },
     { key: "leaderboard", label: "Leaderboard", Icon: IconLeaderboard },
@@ -4779,8 +4790,8 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           { label: "Risk", value: t.risk !== null && t.risk !== undefined ? `${t.risk}%` : "—" },
           { label: "R:R", value: t.rr !== null && t.rr !== undefined ? `${t.rr}R` : "—" },
           { label: "Grade", value: liveGrade || "—", color: liveGrade ? gradeColor(liveGrade) : null },
-          { label: "Confluences", value: tradeConfluenceNames.length ? tradeConfluenceNames.join(", ") : "—" },
-          { label: "Targets", value: tradeTargetTagNames.length ? tradeTargetTagNames.join(", ") : "—" },
+          { label: "Confluences", value: tradeConfluenceNames.length ? tradeConfluenceNames.join("\n") : "—" },
+          { label: "Targets", value: tradeTargetTagNames.length ? tradeTargetTagNames.join("\n") : "—" },
         ];
         return (
           <DraggablePopup
@@ -4794,7 +4805,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               {fields.map((f) => (
                 <div key={f.label}>
                   <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>{f.label.toUpperCase()}</div>
-                  <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: f.color || COLORS.text }}>{f.value}</div>
+                  <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: f.color || COLORS.text, whiteSpace: "pre-line" }}>{f.value}</div>
                 </div>
               ))}
             </div>
@@ -4856,7 +4867,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
             title="Journal entry"
             onClose={() => setViewEntryId(null)}
             defaultX={Math.max(60, window.innerWidth - 500)}
-            defaultY={140}
+            defaultY={70}
           >
             <div style={{ fontSize: 20, fontWeight: 700, color: mi.color, marginBottom: 18 }}>{mi.label}</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 18 }}>
@@ -4886,14 +4897,6 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               >
                 ✎ Edit entry
               </button>
-              {linkedTrade && (
-                <button
-                  onClick={() => { setViewEntryId(null); setViewTradeId(linkedTrade.id); }}
-                  style={{ ...ghostBtnStyle_(), flex: 1 }}
-                >
-                  View linked trade
-                </button>
-              )}
               <button
                 onClick={() => { setViewEntryId(null); deleteEntry(en.id); }}
                 style={{ ...deleteBtnStyle_(), flex: "0 0 auto", padding: "10px 16px" }}
