@@ -3171,7 +3171,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               {tab === "dashboard" ? "Dashboard" : tab === "trades" ? "Add Trade" : tab === "media" ? "Trades" : tab === "calendar" ? "Performance" : tab === "patterns" ? "Patterns" : tab === "friends" ? "Friends" : tab === "leaderboard" ? "Leaderboard" : tab === "feedback" ? "Feedback" : tab === "settings" ? "Settings" : "Journal"}
             </h1>
             <div style={{ fontSize: 13, color: COLORS.textMuted, marginTop: 2 }}>
-              {tab === "dashboard" ? "Your performance and your friends'" : tab === "trades" ? "Log and review every trade" : tab === "media" ? "Every photo and video, across every trade" : tab === "calendar" ? "Account growth and daily/weekly P&L" : tab === "patterns" ? "How you perform by how you felt" : tab === "friends" ? "See each other's trades" : tab === "leaderboard" ? "See how you rank, opt-in only" : tab === "feedback" ? "Tell us what to build next" : tab === "settings" ? "Targets and appearance" : "Track how you felt and why"}
+              {tab === "dashboard" ? "Your performance and your friends'" : tab === "trades" ? "Log and review every trade" : tab === "media" ? "Every photo and video, across every trade" : tab === "calendar" ? "Account growth and daily/weekly P&L" : tab === "patterns" ? "" : tab === "friends" ? "See each other's trades" : tab === "leaderboard" ? "See how you rank, opt-in only" : tab === "feedback" ? "Tell us what to build next" : tab === "settings" ? "Targets and appearance" : "Track how you felt and why"}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
@@ -4933,8 +4933,8 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           <DraggablePopup
             title={t.entryType === "payout" ? "Payout" : `Trade #${tradeNumberMap.get(t.id)}`}
             onClose={() => setViewTradeId(null)}
-            defaultX={40}
-            defaultY={70}
+            defaultX={Math.max(20, (window.innerWidth - 940) / 2)}
+            defaultY={90}
           >
             <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: pnlColor(t), marginBottom: 18 }}>{fmtMoney(t.pnl)}</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 18 }}>
@@ -5002,8 +5002,8 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           <DraggablePopup
             title="Journal entry"
             onClose={() => setViewEntryId(null)}
-            defaultX={Math.max(60, window.innerWidth - 500)}
-            defaultY={70}
+            defaultX={Math.max(20, (window.innerWidth - 940) / 2) + 480}
+            defaultY={90}
           >
             <div style={{ fontSize: 20, fontWeight: 700, color: mi.color, marginBottom: 18 }}>{mi.label}</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 18 }}>
