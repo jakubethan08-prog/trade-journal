@@ -2707,6 +2707,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
 
   const tradingOnly = trades.filter((t) => t.entryType !== "payout");
   const totalPnl = tradingOnly.reduce((s, t) => s + t.pnl, 0);
+  const totalPayouts = Math.abs(trades.filter((t) => t.entryType === "payout").reduce((s, t) => s + t.pnl, 0));
   const wins = tradingOnly.filter((t) => t.pnl > 0).length;
   const losses = tradingOnly.filter((t) => t.pnl < 0).length;
   const winRate = tradingOnly.length ? Math.round((wins / tradingOnly.length) * 100) : 0;
@@ -2792,6 +2793,14 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   function sameIds(a, b) {
     return a.length === b.length && a.every((v, i) => v === b[i]);
   }
+  // A stable "Pattern N" number per pattern, assigned by creation order —
+  // independent of whatever order patternPerf currently displays in (which
+  // re-sorts by win rate), so a pattern's default name never changes.
+  const patternNumberMap = new Map(
+    [...patternsList]
+      .sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : (a.id < b.id ? -1 : 1)))
+      .map((p, i) => [p.id, i + 1])
+  );
   const patternPerf = patternsList
     // A pattern with zero linked confluences AND zero linked target tags is
     // a "naked" leftover from a failed insert, not a real pattern — never
@@ -2822,7 +2831,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
         + tagIds.reduce((s, id) => s + (Number(targetTagValueById[id]) || 0), 0);
       const autoGrade = computeAutoGrade(pointsTotal, targets.gradeThresholds);
       const sortedTrades = [...taggedTrades].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-      return { id: p.id, name: p.name || null, label, confLabel, tagLabel, grade: p.grade, count, total, winRateP, biggestWin, biggestLoss, pointsTotal, autoGrade, trades: sortedTrades };
+      return { id: p.id, name: p.name || null, number: patternNumberMap.get(p.id), label, confLabel, tagLabel, grade: p.grade, count, total, winRateP, biggestWin, biggestLoss, pointsTotal, autoGrade, trades: sortedTrades };
     })
     // Never show (or let stats/naming/grading attach to) a pattern with no
     // trades actually matching its exact combination — e.g. one left behind
@@ -3178,7 +3187,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
             </div>
 
             <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 12 }}>
-              <StatCard label="Trades taken" value={tradingOnly.length} />
+              <StatCard label="Total payouts" value={`$${totalPayouts.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} />
               <StatCard label="Account size" value={fmtMoney(currentBalance)} color={currentBalance >= 0 ? COLORS.win : COLORS.loss} />
               <StatCard label="Your total P&L" value={fmtMoney(totalPnl)} color={totalPnl >= 0 ? COLORS.win : COLORS.loss} />
               <StatCard label="Your win rate" value={`${winRate}%`} />
@@ -3821,14 +3830,15 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                     <button onClick={() => deletePatternRow(p.id)} style={{ ...deleteBtnStyle_(), position: "absolute", top: 12, right: 12 }} aria-label="Delete pattern">✕</button>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 10, padding: "0 30px" }}>
                       <input
-                        key={p.id + ":" + (p.name || p.label)}
+                        key={p.id + ":" + (p.name || `Pattern ${p.number}`)}
                         type="text"
-                        size={Math.max(12, (p.name || p.label).length + 1)}
-                        defaultValue={p.name || p.label}
+                        size={Math.max(12, (p.name || `Pattern ${p.number}`).length + 1)}
+                        defaultValue={p.name || `Pattern ${p.number}`}
                         placeholder="Name this pattern"
-                        onBlur={(e) => { if (e.target.value.trim() !== (p.name || p.label)) updatePatternName(p.id, e.target.value); }}
+                        onBlur={(e) => { if (e.target.value.trim() !== (p.name || `Pattern ${p.number}`)) updatePatternName(p.id, e.target.value); }}
                         style={{ ...inputStyle_(), width: "auto", maxWidth: "100%", textAlign: "center", fontSize: 14, fontWeight: 700, border: "none", background: "transparent", padding: "2px 0" }}
                       />
+                      <span style={{ fontSize: 11, color: COLORS.textMuted, whiteSpace: "nowrap" }}>change name</span>
                       {p.autoGrade ? (
                         <b style={{ fontSize: 14, color: gradeColor(p.autoGrade) || COLORS.text, whiteSpace: "nowrap" }}>{p.autoGrade}</b>
                       ) : (
