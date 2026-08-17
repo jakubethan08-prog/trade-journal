@@ -1535,6 +1535,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const [patternFormError, setPatternFormError] = useState(null);
   const [expandedPatternId, setExpandedPatternId] = useState(null);
   const [expandedMoodKey, setExpandedMoodKey] = useState(null);
+  const [patternSortBy, setPatternSortBy] = useState("winRate"); // 'number' | 'pnl' | 'winRate' | 'grade' | 'frequency'
   const [durationViewMode, setDurationViewMode] = useState("pctTrades"); // 'pctTrades' | 'winRate'
   const [tConfluenceEntries, setTConfluenceEntries] = useState([]); // [{ localId, confluenceId, timeframe }]
   const [pickConfluenceId, setPickConfluenceId] = useState("");
@@ -2857,8 +2858,15 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     // trades actually matching its exact combination — e.g. one left behind
     // after every trade that had it was edited to remove the tag, or a
     // payout (which never counts toward pattern stats) was tagged with it.
-    .filter((p) => p.count > 0)
-    .sort((a, b) => b.winRateP - a.winRateP || (GRADE_RANK[b.autoGrade] ?? -1) - (GRADE_RANK[a.autoGrade] ?? -1));
+    .filter((p) => p.count > 0);
+  const patternSortComparators = {
+    number: (a, b) => a.number - b.number,
+    pnl: (a, b) => b.total - a.total,
+    winRate: (a, b) => b.winRateP - a.winRateP || (GRADE_RANK[b.autoGrade] ?? -1) - (GRADE_RANK[a.autoGrade] ?? -1),
+    grade: (a, b) => (GRADE_RANK[b.autoGrade] ?? -1) - (GRADE_RANK[a.autoGrade] ?? -1) || b.winRateP - a.winRateP,
+    frequency: (a, b) => b.count - a.count,
+  };
+  const sortedPatternPerf = [...patternPerf].sort(patternSortComparators[patternSortBy] || patternSortComparators.winRate);
   const bestConfluencePattern = patternPerf.length
     ? [...patternPerf].sort((a, b) => b.total - a.total)[0]
     : null;
@@ -3880,7 +3888,21 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           </>
         ) : tab === "patterns" ? (
           <>
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Patterns</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>Patterns</div>
+              {patternPerf.length > 0 && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600 }}>Sort by</span>
+                  <select value={patternSortBy} onChange={(e) => setPatternSortBy(e.target.value)} style={{ ...inputStyle_(), width: "auto", display: "inline-block" }}>
+                    <option value="number">Number</option>
+                    <option value="pnl">P&L</option>
+                    <option value="winRate">Win rate</option>
+                    <option value="grade">Grade</option>
+                    <option value="frequency">Frequency</option>
+                  </select>
+                </div>
+              )}
+            </div>
             {patternFormError && (
               <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13, marginBottom: 16 }}>
                 {patternFormError}
@@ -3890,8 +3912,9 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               <EmptyState text="Patterns are built automatically: tag a trade with a combination of confluences and/or targets (in Add Trade), and that combination shows up here to grade and track." />
             ) : (
               <div style={{ display: "grid", gap: 10, marginBottom: 28 }}>
-                {patternPerf.map((p) => (
+                {sortedPatternPerf.map((p) => (
                   <div key={p.id} style={{ position: "relative", background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                    <span className="mono" style={{ position: "absolute", top: 14, left: 16, fontSize: 11.5, color: COLORS.textMuted, fontWeight: 700 }}>#{p.number}</span>
                     <button onClick={() => deletePatternRow(p.id)} style={{ ...deleteBtnStyle_(), position: "absolute", top: 12, right: 12 }} aria-label="Delete pattern">✕</button>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 10, padding: "0 30px" }}>
                       <input
