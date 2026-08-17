@@ -1196,13 +1196,17 @@ function FloatingTargetsWindow({ onClose, children }) {
 // alongside another one (e.g. a trade + its linked journal entry) so they
 // don't have to stack exactly on top of each other. No backdrop: dragging
 // one out of the way is how you see what's behind it.
-function DraggablePopup({ title, onClose, children, defaultX, defaultY, width = 460 }) {
+function DraggablePopup({ title, onClose, children, defaultX, defaultY, width = 460, siblingRefs = [], exposeRef }) {
   const [pos, setPos] = useState(() => ({
     x: Math.min(Math.max(20, defaultX), Math.max(20, window.innerWidth - width - 20)),
     y: Math.min(Math.max(20, defaultY), Math.max(20, window.innerHeight - 100)),
   }));
   const dragRef = useRef(null);
   const nodeRef = useRef(null);
+  function setNode(el) {
+    nodeRef.current = el;
+    if (exposeRef) exposeRef.current = el;
+  }
 
   useEffect(() => {
     function handleMove(e) {
@@ -1224,12 +1228,19 @@ function DraggablePopup({ title, onClose, children, defaultX, defaultY, width = 
   }, []);
 
   useEffect(() => {
+    // Close only when the click is outside THIS popup and outside every
+    // "sibling" popup passed in (e.g. the linked trade/journal popup
+    // shown alongside this one) — so a click on the sibling doesn't
+    // improperly close this one, but a click truly outside both closes
+    // both together (each popup's own listener fires on the same click).
     function handleOutside(e) {
-      if (nodeRef.current && !nodeRef.current.contains(e.target)) onClose();
+      if (!nodeRef.current || nodeRef.current.contains(e.target)) return;
+      if (siblingRefs.some((r) => r.current && r.current.contains(e.target))) return;
+      onClose();
     }
     document.addEventListener("mousedown", handleOutside);
     return () => document.removeEventListener("mousedown", handleOutside);
-  }, [onClose]);
+  }, [onClose, siblingRefs]);
 
   function startDrag(e) {
     dragRef.current = { offsetX: e.clientX - pos.x, offsetY: e.clientY - pos.y };
@@ -1237,7 +1248,7 @@ function DraggablePopup({ title, onClose, children, defaultX, defaultY, width = 
 
   return (
     <div
-      ref={nodeRef}
+      ref={setNode}
       style={{
         position: "fixed", left: pos.x, top: pos.y, zIndex: 55, width,
         maxWidth: "calc(100vw - 40px)", maxHeight: "85vh", overflowY: "auto",
@@ -1460,6 +1471,8 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const [mediaModalTradeId, setMediaModalTradeId] = useState(null);
   const [viewTradeId, setViewTradeId] = useState(null);
   const [viewEntryId, setViewEntryId] = useState(null);
+  const tradePopupNodeRef = useRef(null);
+  const entryPopupNodeRef = useRef(null);
   const [editingTradeId, setEditingTradeId] = useState(null);
   const [editForm, setEditForm] = useState(null);
   const [editPickConfluenceId, setEditPickConfluenceId] = useState("");
@@ -3232,7 +3245,16 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
             </div>
             <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, marginBottom: 24 }}>
               <StatCard label="Best state of mind" value={bestPattern ? bestPattern.label : "—"} color={bestPattern ? COLORS.win : undefined} />
-              <StatCard label="Best pattern" value={bestConfluencePattern ? (bestConfluencePattern.name || bestConfluencePattern.label) : "—"} color={bestConfluencePattern ? COLORS.win : undefined} />
+              <StatCard
+                label="Best pattern"
+                value={bestConfluencePattern ? (
+                  <>
+                    <span style={{ color: COLORS.textMuted, fontWeight: 500 }}>#{bestConfluencePattern.number} </span>
+                    {bestConfluencePattern.name || bestConfluencePattern.label}
+                  </>
+                ) : "—"}
+                color={bestConfluencePattern ? COLORS.win : undefined}
+              />
             </div>
 
             <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Friends</div>
@@ -4969,6 +4991,8 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
             onClose={() => setViewTradeId(null)}
             defaultX={Math.max(20, (window.innerWidth - 940) / 2)}
             defaultY={90}
+            exposeRef={tradePopupNodeRef}
+            siblingRefs={viewEntryId ? [entryPopupNodeRef] : []}
           >
             <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: pnlColor(t), marginBottom: 18 }}>{fmtMoney(t.pnl)}</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 18 }}>
@@ -5038,6 +5062,8 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
             onClose={() => setViewEntryId(null)}
             defaultX={Math.max(20, (window.innerWidth - 940) / 2) + 480}
             defaultY={90}
+            exposeRef={entryPopupNodeRef}
+            siblingRefs={viewTradeId ? [tradePopupNodeRef] : []}
           >
             <div style={{ fontSize: 20, fontWeight: 700, color: mi.color, marginBottom: 18 }}>{mi.label}</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 18 }}>
