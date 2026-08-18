@@ -103,22 +103,11 @@ function applyTheme(themeName) {
 
 const GRADES = ["B-", "B", "B+", "A-", "A", "A+", "A++"];
 const GRADE_RANK = Object.fromEntries(GRADES.map((g, i) => [g, i]));
-// Auto-grading thresholds are fixed, not user-configurable.
-const FIXED_GRADE_THRESHOLDS = { "A++": 100, "A+": 50, "A": 30, "A-": 20, "B+": 10, "B": 5, "B-": 1 };
 function gradeColor(grade) {
   if (!grade) return null;
   const rank = GRADE_RANK[grade];
   if (rank >= 3) return "#16A34A";       // A- through A++
   return "#2563EB";                       // B- through B+
-}
-function computeAutoGrade(points, thresholds) {
-  if (!thresholds || typeof thresholds !== "object") return null;
-  for (let i = GRADES.length - 1; i >= 0; i--) {
-    const g = GRADES[i];
-    const req = thresholds[g];
-    if (req !== undefined && req !== null && req !== "" && points >= Number(req)) return g;
-  }
-  return null;
 }
 function pnlColor(t) {
   if (t.entryType === "payout") return COLORS.payout;
@@ -1357,7 +1346,7 @@ function AuthScreen() {
         </div>
         {mode === "signup" && (
           <Field label="Nickname (shown to friends)">
-            <input type="text" value={nickname} onChange={(e) => setNickname(e.target.value)} placeholder="e.g. Jakub" style={inputStyle_()} autoComplete="nickname" />
+            <input type="text" value={nickname} onChange={(e) => setNickname(e.target.value)} placeholder="e.g. Jerry Smith" style={inputStyle_()} autoComplete="nickname" />
           </Field>
         )}
         <Field label="Email">
@@ -1560,7 +1549,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const [expandedMoodKey, setExpandedMoodKey] = useState(null);
   const [patternSortBy, setPatternSortBy] = useState("winRate"); // 'number' | 'pnl' | 'winRate' | 'grade' | 'frequency'
   const [durationViewMode, setDurationViewMode] = useState("pctTrades"); // 'pctTrades' | 'winRate'
-  const [tConfluenceEntries, setTConfluenceEntries] = useState([]); // [{ localId, confluenceId, timeframe }]
+  const [tConfluenceEntries, setTConfluenceEntries] = useState([]); // [{ localId, confluenceId, timeframe, points }]
   const [pickConfluenceId, setPickConfluenceId] = useState("");
   const [pickTimeframe, setPickTimeframe] = useState("");
   // Patterns: a specific COMBINATION of confluences AND target tags,
@@ -2216,13 +2205,6 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     setTConfluenceEntries(tConfluenceEntries.filter((e) => e.confluenceId !== id));
   }
 
-  async function updateConfluencePoints(id, points) {
-    const n = points === "" || points === null || points === undefined ? 0 : Number(points);
-    setConfluencesList((prev) => prev.map((c) => (c.id === id ? { ...c, points: n } : c)));
-    const { error } = await supabaseClient.from("confluences").update({ points: n }).eq("id", id);
-    if (error) setPatternFormError("Couldn't save that confluence's points.");
-  }
-
   // A trade can carry the same confluence more than once (different
   // timeframes each time), so selections are an appendable list of entries
   // rather than a toggled set of ids.
@@ -2500,7 +2482,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     setSaveError(null);
     setTPnl(""); setTDurH(""); setTDurM(""); setTDurS(""); setTSymbol("");
     setTRisk(""); setTRR(""); setTSide("long"); setTGrade(""); setTEntryType("trade");
-    setTConfluenceEntries([]); setPickConfluenceId(""); setPickTimeframe(""); setTTargetTags([]);
+    setTConfluenceEntries([]); setPickConfluenceId(""); setPickTimeframe(""); setPickPoints(""); setTTargetTags([]);
   }
 
   async function addEntry(e) {
@@ -2814,7 +2796,6 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const worstPattern = patternStats[patternStats.length - 1];
 
   const confluenceNameById = Object.fromEntries(confluencesList.map((c) => [c.id, c.name]));
-  const confluenceNameToPointsById = Object.fromEntries(confluencesList.map((c) => [c.id, c.points || 0]));
   const targetTagNameById = Object.fromEntries(targetTagsList.map((t) => [t.id, t.name]));
   const targetTagValueById = Object.fromEntries(targetTagsList.map((t) => [t.id, t.value || 0]));
 
@@ -2871,34 +2852,24 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       // that figure is 0, not the closest-to-zero trade of the other kind.
       const biggestWin = winningTrades.length ? Math.max(...winningTrades.map((t) => t.pnl)) : 0;
       const biggestLoss = losingTrades.length ? Math.min(...losingTrades.map((t) => t.pnl)) : 0;
-      const pointsTotal = confIds.reduce((s, id) => s + (Number(confluenceNameToPointsById[id]) || 0), 0)
-        + tagIds.reduce((s, id) => s + (Number(targetTagValueById[id]) || 0), 0);
-      const autoGrade = computeAutoGrade(pointsTotal, FIXED_GRADE_THRESHOLDS);
       const sortedTrades = [...taggedTrades].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-      return { id: p.id, name: p.name || null, number: patternNumberMap.get(p.id), label, confLabel, tagLabel, grade: p.grade, count, total, winRateP, biggestWin, biggestLoss, pointsTotal, autoGrade, trades: sortedTrades };
+      return { id: p.id, name: p.name || null, number: patternNumberMap.get(p.id), label, confLabel, tagLabel, grade: p.grade, count, total, winRateP, biggestWin, biggestLoss, trades: sortedTrades };
     })
-    // Never show (or let stats/naming/grading attach to) a pattern with no
-    // trades actually matching its exact combination — e.g. one left behind
-    // after every trade that had it was edited to remove the tag, or a
-    // payout (which never counts toward pattern stats) was tagged with it.
+    // Never show (or let stats/naming attach to) a pattern with no trades
+    // actually matching its exact combination — e.g. one left behind after
+    // every trade that had it was edited to remove the tag, or a payout
+    // (which never counts toward pattern stats) was tagged with it.
     .filter((p) => p.count > 0);
   const patternSortComparators = {
     number: (a, b) => a.number - b.number,
     pnl: (a, b) => b.total - a.total,
-    winRate: (a, b) => b.winRateP - a.winRateP || (GRADE_RANK[b.autoGrade] ?? -1) - (GRADE_RANK[a.autoGrade] ?? -1),
-    grade: (a, b) => (GRADE_RANK[b.autoGrade] ?? -1) - (GRADE_RANK[a.autoGrade] ?? -1) || b.winRateP - a.winRateP,
+    winRate: (a, b) => b.winRateP - a.winRateP,
     frequency: (a, b) => b.count - a.count,
   };
   const sortedPatternPerf = [...patternPerf].sort(patternSortComparators[patternSortBy] || patternSortComparators.winRate);
   const bestConfluencePattern = patternPerf.length
     ? [...patternPerf].sort((a, b) => b.total - a.total)[0]
     : null;
-  // A trade's displayed grade should always be its pattern's live
-  // auto-grade, not the stale `grade` column on the trade itself (left
-  // over from the old manual-grade flow, which can go stale as confluence
-  // points/thresholds change).
-  const tradeAutoGradeById = {};
-  patternPerf.forEach((p) => { p.trades.forEach((t) => { tradeAutoGradeById[t.id] = p.autoGrade; }); });
 
   // ---- Calendar: group trades by date, build week rows with a trailing Total column ----
   const dayMap = trades.reduce((acc, t) => {
@@ -3390,6 +3361,14 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                   <Field label="R:R" style={{ flex: "1 1 90px" }}>
                     <input type="number" step="0.01" min="0" value={tRR} onChange={(e) => setTRR(e.target.value)} placeholder="e.g. 2.50" style={inputStyle_()} className="mono" />
                   </Field>
+                  <Field label="Grade" style={{ flex: "1 1 90px" }}>
+                    <select value={tGrade} onChange={(e) => setTGrade(e.target.value)} style={inputStyle_()}>
+                      <option value="">—</option>
+                      {GRADES.slice().reverse().map((g) => (
+                        <option key={g} value={g}>{g}</option>
+                      ))}
+                    </select>
+                  </Field>
                 </div>
               )}
               {tEntryType === "trade" && (
@@ -3580,13 +3559,13 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                                   </td>
                                   <td className="mono" style={{ padding: "10px 14px", color: COLORS.textMuted, whiteSpace: "nowrap" }}>{fmtDuration(t.duration)}</td>
                                   <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
-                                    {tradeAutoGradeById[t.id] ? (
+                                    {t.grade ? (
                                       <span className="mono" style={{
                                         fontSize: 11.5, fontWeight: 700, padding: "2px 9px", borderRadius: 6,
-                                        color: gradeColor(tradeAutoGradeById[t.id]), background: gradeColor(tradeAutoGradeById[t.id]) + "18",
-                                        border: `1px solid ${gradeColor(tradeAutoGradeById[t.id])}40`,
+                                        color: gradeColor(t.grade), background: gradeColor(t.grade) + "18",
+                                        border: `1px solid ${gradeColor(t.grade)}40`,
                                       }}>
-                                        {tradeAutoGradeById[t.id]}
+                                        {t.grade}
                                       </span>
                                     ) : "—"}
                                   </td>
@@ -3929,7 +3908,6 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                     <option value="number">Number</option>
                     <option value="pnl">P&L</option>
                     <option value="winRate">Win rate</option>
-                    <option value="grade">Grade</option>
                     <option value="frequency">Frequency</option>
                   </select>
                 </div>
@@ -3959,11 +3937,6 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                         style={{ ...inputStyle_(), width: "auto", maxWidth: "100%", textAlign: "center", fontSize: 14, fontWeight: 700, border: "none", background: "transparent", padding: "2px 0" }}
                       />
                       <span style={{ fontSize: 11, color: COLORS.textMuted, whiteSpace: "nowrap" }}>change name</span>
-                      {p.autoGrade ? (
-                        <b style={{ fontSize: 14, color: gradeColor(p.autoGrade) || COLORS.text, whiteSpace: "nowrap" }}>{p.autoGrade}</b>
-                      ) : (
-                        <span style={{ fontSize: 12, color: COLORS.textMuted, whiteSpace: "nowrap" }}>Ungraded</span>
-                      )}
                     </div>
                     <div
                       onClick={() => setExpandedPatternId(expandedPatternId === p.id ? null : p.id)}
@@ -4103,7 +4076,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               <div style={{ fontSize: 13, color: COLORS.text, fontWeight: 700 }}>Your nickname</div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
                 <Field label="Shown to friends instead of your email" style={{ flex: "1 1 220px" }}>
-                  <input type="text" value={nickname} onChange={(e) => { setNickname(e.target.value); setNicknameSavedMsg(false); }} placeholder="e.g. Jakub" style={inputStyle_()} />
+                  <input type="text" value={nickname} onChange={(e) => { setNickname(e.target.value); setNicknameSavedMsg(false); }} placeholder="e.g. Jerry Smith" style={inputStyle_()} />
                 </Field>
                 <button type="submit" disabled={nicknameBusy} style={{ ...primaryBtnStyle_(), opacity: nicknameBusy ? 0.7 : 1 }}>
                   {nicknameBusy ? "Saving…" : "Save"}
@@ -4321,45 +4294,15 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
             {confluencesList.length === 0 ? (
               <EmptyState text="No confluences yet. Add some above (e.g. IFVG, HTF FVG, CISD), then select them on a trade in Add Trade." />
             ) : (
-              <>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-                  {confluencesList.map((c) => (
-                    <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: COLORS.subtleBg, border: `1.5px solid ${COLORS.border}`, borderRadius: 20, padding: "6px 8px 6px 14px", fontSize: 12.5, fontWeight: 600, color: COLORS.text }}>
-                      {c.name}
-                      <input
-                        type="number"
-                        step="0.5"
-                        value={c.points ? c.points : ""}
-                        onChange={(e) => updateConfluencePoints(c.id, e.target.value)}
-                        onFocus={(e) => e.target.select()}
-                        placeholder="0"
-                        title="Points toward auto-grading"
-                        style={{ width: 44, fontSize: 12, padding: "2px 4px", borderRadius: 8, border: `1px solid ${COLORS.border}`, background: COLORS.card, color: COLORS.text }}
-                      />
-                      <button onClick={() => deleteConfluence(c.id)} style={{ ...deleteBtnStyle_(), padding: 0, fontSize: 12 }} aria-label={`Delete ${c.name}`}>✕</button>
-                    </span>
-                  ))}
-                </div>
-                <div style={{ fontSize: 11.5, color: COLORS.textMuted, marginBottom: 28 }}>
-                  Set a point value per confluence, then define grade thresholds below to auto-grade patterns.
-                </div>
-              </>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 28 }}>
+                {confluencesList.map((c) => (
+                  <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: COLORS.subtleBg, border: `1.5px solid ${COLORS.border}`, borderRadius: 20, padding: "6px 14px", fontSize: 12.5, fontWeight: 600, color: COLORS.text }}>
+                    {c.name}
+                    <button onClick={() => deleteConfluence(c.id)} style={{ ...deleteBtnStyle_(), padding: 0, fontSize: 12 }} aria-label={`Delete ${c.name}`}>✕</button>
+                  </span>
+                ))}
+              </div>
             )}
-
-            <div style={{ fontSize: 12.5, fontWeight: 600, color: COLORS.textMuted, marginBottom: 10 }}>Grade thresholds</div>
-            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 28, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
-              {GRADES.slice().reverse().map((g) => (
-                <Field key={g} label={g} style={{ width: 84 }}>
-                  <input
-                    type="number"
-                    value={FIXED_GRADE_THRESHOLDS[g]}
-                    disabled
-                    title="Grade thresholds are fixed"
-                    style={{ ...inputStyle_(), opacity: 0.6, cursor: "not-allowed" }}
-                  />
-                </Field>
-              ))}
-            </div>
 
             <div style={{ fontSize: 12.5, fontWeight: 600, color: COLORS.textMuted, marginBottom: 10 }}>Target tags</div>
             <form onSubmit={addTargetTag} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
@@ -4694,9 +4637,9 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                         <span>{fmtDuration(t.duration)}</span>
                         {t.risk !== null && t.risk !== undefined && <span>Risk {t.risk}%</span>}
                         {t.rr !== null && t.rr !== undefined && <span>{t.rr}R</span>}
-                        {tradeAutoGradeById[t.id] && (
-                          <span style={{ color: gradeColor(tradeAutoGradeById[t.id]), background: gradeColor(tradeAutoGradeById[t.id]) + "18", border: `1px solid ${gradeColor(tradeAutoGradeById[t.id])}40`, borderRadius: 6, padding: "1px 7px", fontWeight: 700 }}>
-                            {tradeAutoGradeById[t.id]}
+                        {t.grade && (
+                          <span style={{ color: gradeColor(t.grade), background: gradeColor(t.grade) + "18", border: `1px solid ${gradeColor(t.grade)}40`, borderRadius: 6, padding: "1px 7px", fontWeight: 700 }}>
+                            {t.grade}
                           </span>
                         )}
                         <button
@@ -4966,7 +4909,6 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           .map((l) => { const tg = targetTagsList.find((x) => x.id === l.target_tag_id); return tg ? tg.name : null; })
           .filter(Boolean);
         const linkedEntries = entries.filter((en) => en.tradeId === t.id);
-        const liveGrade = tradeAutoGradeById[t.id] || null;
         const fields = [
           { label: "Date", value: t.date },
           { label: "Symbol", value: t.symbol || "—" },
@@ -4975,7 +4917,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           { label: "Duration", value: fmtDuration(t.duration) },
           { label: "Risk", value: t.risk !== null && t.risk !== undefined ? `${t.risk}%` : "—" },
           { label: "R:R", value: t.rr !== null && t.rr !== undefined ? `${t.rr}R` : "—" },
-          { label: "Grade", value: liveGrade || "—", color: liveGrade ? gradeColor(liveGrade) : null },
+          { label: "Grade", value: t.grade || "—", color: t.grade ? gradeColor(t.grade) : null },
           { label: "Confluences", value: tradeConfluenceNames.length ? tradeConfluenceNames.join("\n") : "—" },
           { label: "Targets", value: tradeTargetTagNames.length ? tradeTargetTagNames.join("\n") : "—" },
         ];

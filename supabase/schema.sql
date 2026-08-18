@@ -1226,3 +1226,14 @@ as $$
   order by total_pnl desc;
 $$;
 grant execute on function public.get_leaderboard(text) to authenticated;
+
+-- =========================================================================
+-- Confluence grading moves from a fixed value per confluence (set once in
+-- Settings) to a value chosen each time you tag a confluence onto a trade
+-- -- the same confluence can carry different points on different trades.
+-- Auto-grading is now computed per TRADE (that trade's tagged confluence
+-- points + its target tags' fixed values, against the fixed A++.."B-"
+-- scale), not per pattern. confluences.points is no longer read anywhere
+-- and is left in place unused rather than dropped.
+-- =========================================================================
+alter table public.trade_confluences add column if not exists points numeric not null default 0;
