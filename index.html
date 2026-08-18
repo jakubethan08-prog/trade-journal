@@ -4268,6 +4268,22 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               )}
             </div>
 
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, maxWidth: 420 }}>
+              <span style={{ fontSize: 13, fontWeight: 700 }}>Targets</span>
+              {targetsPopped ? (
+                <button onClick={() => setTargetsPopped(false)} style={ghostBtnStyle_()}>Dock back here</button>
+              ) : (
+                <button onClick={() => { setTargetsPopped(true); setTab("calendar"); }} style={ghostBtnStyle_()}>Pop out to Performance ↗</button>
+              )}
+            </div>
+            {targetsPopped ? (
+              <EmptyState text="Targets is popped out as a floating window — drag it around on the Performance tab to watch the chart update live. Click “Dock back here” above to bring it back." />
+            ) : (
+              <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 18, boxShadow: "0 1px 2px rgba(23,21,51,0.04)", maxWidth: 420, display: "flex", flexDirection: "column", gap: 16, marginBottom: 28 }}>
+                <TargetsPanel targets={targets} updateTargets={updateTargets} profitTargetHit={profitTargetHit} maxLossHit={maxLossHit} />
+              </div>
+            )}
+
             <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Pattern configuration</div>
 
             <div style={{ fontSize: 12.5, fontWeight: 600, color: COLORS.textMuted, marginBottom: 10 }}>Confluences</div>
@@ -4314,22 +4330,6 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                     <button onClick={() => deleteTargetTag(tg.id)} style={{ ...deleteBtnStyle_(), padding: 0, fontSize: 12 }} aria-label={`Delete ${tg.name}`}>✕</button>
                   </span>
                 ))}
-              </div>
-            )}
-
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, maxWidth: 420 }}>
-              <span style={{ fontSize: 13, fontWeight: 700 }}>Targets</span>
-              {targetsPopped ? (
-                <button onClick={() => setTargetsPopped(false)} style={ghostBtnStyle_()}>Dock back here</button>
-              ) : (
-                <button onClick={() => { setTargetsPopped(true); setTab("calendar"); }} style={ghostBtnStyle_()}>Pop out to Performance ↗</button>
-              )}
-            </div>
-            {targetsPopped ? (
-              <EmptyState text="Targets is popped out as a floating window — drag it around on the Performance tab to watch the chart update live. Click “Dock back here” above to bring it back." />
-            ) : (
-              <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 18, boxShadow: "0 1px 2px rgba(23,21,51,0.04)", maxWidth: 420, display: "flex", flexDirection: "column", gap: 16 }}>
-                <TargetsPanel targets={targets} updateTargets={updateTargets} profitTargetHit={profitTargetHit} maxLossHit={maxLossHit} />
               </div>
             )}
           </>
