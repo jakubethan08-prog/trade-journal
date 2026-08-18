@@ -103,6 +103,8 @@ function applyTheme(themeName) {
 
 const GRADES = ["B-", "B", "B+", "A-", "A", "A+", "A++"];
 const GRADE_RANK = Object.fromEntries(GRADES.map((g, i) => [g, i]));
+// Auto-grading thresholds are fixed, not user-configurable.
+const FIXED_GRADE_THRESHOLDS = { "A++": 100, "A+": 50, "A": 30, "A-": 20, "B+": 10, "B": 5, "B-": 1 };
 function gradeColor(grade) {
   if (!grade) return null;
   const rank = GRADE_RANK[grade];
@@ -285,7 +287,6 @@ function rowToTargets(row) {
       axisColor: "",
       calWinColor: "#16A34A", calLossColor: "#E23D45", calPayoutColor: "#0EA5E9",
       selectedTabColor: "", addTradeColor: "", welcomeBannerColor: "",
-      gradeThresholds: {},
     };
   }
   return {
@@ -302,7 +303,6 @@ function rowToTargets(row) {
     selectedTabColor: row.selected_tab_color || "",
     addTradeColor: row.add_trade_color || "",
     welcomeBannerColor: row.welcome_banner_color || "",
-    gradeThresholds: row.grade_thresholds && typeof row.grade_thresholds === "object" ? row.grade_thresholds : {},
   };
 }
 function targetsToRow(t, userId) {
@@ -321,7 +321,6 @@ function targetsToRow(t, userId) {
     selected_tab_color: t.selectedTabColor || null,
     add_trade_color: t.addTradeColor || null,
     welcome_banner_color: t.welcomeBannerColor || null,
-    grade_thresholds: t.gradeThresholds && typeof t.gradeThresholds === "object" ? t.gradeThresholds : {},
   };
 }
 function rowToMedia(row) {
@@ -2874,7 +2873,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       const biggestLoss = losingTrades.length ? Math.min(...losingTrades.map((t) => t.pnl)) : 0;
       const pointsTotal = confIds.reduce((s, id) => s + (Number(confluenceNameToPointsById[id]) || 0), 0)
         + tagIds.reduce((s, id) => s + (Number(targetTagValueById[id]) || 0), 0);
-      const autoGrade = computeAutoGrade(pointsTotal, targets.gradeThresholds);
+      const autoGrade = computeAutoGrade(pointsTotal, FIXED_GRADE_THRESHOLDS);
       const sortedTrades = [...taggedTrades].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
       return { id: p.id, name: p.name || null, number: patternNumberMap.get(p.id), label, confLabel, tagLabel, grade: p.grade, count, total, winRateP, biggestWin, biggestLoss, pointsTotal, autoGrade, trades: sortedTrades };
     })
@@ -4353,16 +4352,10 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                 <Field key={g} label={g} style={{ width: 84 }}>
                   <input
                     type="number"
-                    step="0.5"
-                    value={targets.gradeThresholds && targets.gradeThresholds[g] !== undefined ? targets.gradeThresholds[g] : ""}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      const next = { ...(targets.gradeThresholds || {}) };
-                      if (v === "") delete next[g]; else next[g] = Number(v);
-                      updateTargets({ gradeThresholds: next });
-                    }}
-                    placeholder="pts"
-                    style={inputStyle_()}
+                    value={FIXED_GRADE_THRESHOLDS[g]}
+                    disabled
+                    title="Grade thresholds are fixed"
+                    style={{ ...inputStyle_(), opacity: 0.6, cursor: "not-allowed" }}
                   />
                 </Field>
               ))}
