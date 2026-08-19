@@ -3348,7 +3348,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                     </select>
                   </Field>
                   <Field label="Risk (%)" style={{ flex: "1 1 90px" }}>
-                    <input type="number" step="0.1" min="0" value={tRisk} onChange={(e) => setTRisk(e.target.value)} placeholder="—" style={inputStyle_()} className="mono" />
+                    <input type="number" step="0.001" min="0" value={tRisk} onChange={(e) => setTRisk(e.target.value)} placeholder="—" style={inputStyle_()} className="mono" />
                   </Field>
                   <Field label="R:R" style={{ flex: "1 1 90px" }}>
                     <input type="number" step="0.01" min="0" value={tRR} onChange={(e) => setTRR(e.target.value)} placeholder="e.g. 2.50" style={inputStyle_()} className="mono" />
@@ -4720,7 +4720,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               </div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 <Field label="Risk (%)" style={{ flex: "1 1 90px" }}>
-                  <input type="number" step="0.1" min="0" value={editForm.risk} onChange={(e) => setEditForm({ ...editForm, risk: e.target.value })} style={inputStyle_()} className="mono" />
+                  <input type="number" step="0.001" min="0" value={editForm.risk} onChange={(e) => setEditForm({ ...editForm, risk: e.target.value })} style={inputStyle_()} className="mono" />
                 </Field>
                 <Field label="R:R" style={{ flex: "1 1 90px" }}>
                   <input type="number" step="0.01" min="0" value={editForm.rr} onChange={(e) => setEditForm({ ...editForm, rr: e.target.value })} style={inputStyle_()} className="mono" />
