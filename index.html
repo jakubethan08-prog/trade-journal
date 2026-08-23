@@ -1338,12 +1338,21 @@ function AuthScreen() {
   }
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", alignItems: "center", justifyContent: "center", background: COLORS.bg, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif" }}>
-      <form onSubmit={submit} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 32, width: "100%", maxWidth: 380, display: "grid", gap: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
-        <div>
-          <div style={{ fontSize: 20, fontWeight: 700, color: COLORS.text, marginBottom: 4 }}>A+ Trades</div>
-          <div style={{ fontSize: 13, color: COLORS.textMuted }}>{mode === "signup" ? "Create your account" : "Log in to your account"}</div>
+    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", alignItems: "center", justifyContent: "center", gap: 28, background: COLORS.bg, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+        <div style={{
+          width: 72, height: 72, borderRadius: 20,
+          background: `linear-gradient(135deg, ${COLORS.accent}, #6D28D9)`,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 32, fontWeight: 800, color: "#fff", letterSpacing: "-0.02em",
+          boxShadow: "0 10px 28px rgba(124,92,252,0.4)",
+        }}>
+          A+
         </div>
+        <div style={{ fontSize: 32, fontWeight: 700, color: COLORS.text, letterSpacing: "-0.02em" }}>Trades</div>
+      </div>
+      <form onSubmit={submit} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 32, width: "100%", maxWidth: 380, display: "grid", gap: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+        <div style={{ fontSize: 13, color: COLORS.textMuted }}>{mode === "signup" ? "Create your account" : "Log in to your account"}</div>
         {mode === "signup" && (
           <Field label="Nickname (shown to friends)">
             <input type="text" value={nickname} onChange={(e) => setNickname(e.target.value)} placeholder="e.g. Jerry Smith" style={inputStyle_()} autoComplete="nickname" />
