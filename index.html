@@ -1371,6 +1371,12 @@ function AuthScreen() {
         >
           {mode === "signup" ? "Already have an account? Log in" : "New here? Create an account"}
         </button>
+        <div style={{ textAlign: "center", fontSize: 11.5, color: COLORS.textMuted }}>
+          By continuing you agree to our{" "}
+          <a href="/terms.html" target="_blank" rel="noopener" style={{ color: COLORS.textMuted, textDecoration: "underline" }}>Terms</a>
+          {" "}and{" "}
+          <a href="/privacy.html" target="_blank" rel="noopener" style={{ color: COLORS.textMuted, textDecoration: "underline" }}>Privacy Policy</a>.
+        </div>
       </form>
     </div>
   );
@@ -4338,6 +4344,12 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                 ))}
               </div>
             )}
+
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Legal</div>
+            <div style={{ display: "flex", gap: 16 }}>
+              <a href="/privacy.html" target="_blank" rel="noopener" style={{ color: COLORS.accent, fontSize: 13, fontWeight: 600 }}>Privacy Policy</a>
+              <a href="/terms.html" target="_blank" rel="noopener" style={{ color: COLORS.accent, fontSize: 13, fontWeight: 600 }}>Terms &amp; Conditions</a>
+            </div>
           </>
         ) : tab === "leaderboard" ? (
           <>
