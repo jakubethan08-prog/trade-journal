@@ -193,9 +193,11 @@ create policy "delete own trade media" on public.trade_media
 -- =========================================================================
 -- Private bucket — files are only ever served via short-lived signed URLs.
 -- Path convention enforced by the app: {user_id}/{trade_id}/{random}-{filename}
-insert into storage.buckets (id, name, public)
-values ('trade-media', 'trade-media', false)
-on conflict (id) do nothing;
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('trade-media', 'trade-media', false, 52428800, array['image/jpeg','image/png','image/gif','image/webp','video/mp4','video/quicktime','video/webm'])
+on conflict (id) do update set
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
 
 drop policy if exists "select own trade media objects" on storage.objects;
 create policy "select own trade media objects" on storage.objects
@@ -910,9 +912,11 @@ alter table public.groups add column if not exists background_image_path text;
 
 -- Private bucket — same signed-URL pattern as trade-media. Path convention:
 -- {group_id}/{random}-{filename}
-insert into storage.buckets (id, name, public)
-values ('group-backgrounds', 'group-backgrounds', false)
-on conflict (id) do nothing;
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('group-backgrounds', 'group-backgrounds', false, 10485760, array['image/jpeg','image/png','image/gif','image/webp'])
+on conflict (id) do update set
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
 
 drop policy if exists "select group background images" on storage.objects;
 create policy "select group background images" on storage.objects
