@@ -25,11 +25,12 @@
   ::-webkit-scrollbar-thumb { background: #D8DAE8; border-radius: 8px; }
   @keyframes emptyStatePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
   .empty-state-pulse { animation: emptyStatePulse 1.4s ease-in-out infinite; }
+  .mobile-bottom-nav, .mobile-fab { display: none; }
   @media (max-width: 780px) {
-    .sidebar { flex-direction: row !important; width: 100% !important; height: auto !important; position: static !important; padding: 8px 10px !important; gap: 4px !important; }
-    .sidebar .logo-block { display: none !important; }
-    .sidebar nav { flex-direction: row !important; width: 100%; justify-content: space-around; }
-    .main-content { margin-left: 0 !important; }
+    .sidebar { display: none !important; }
+    .main-content { margin-left: 0 !important; padding: 16px 14px calc(84px + env(safe-area-inset-bottom)) !important; }
+    .mobile-bottom-nav { display: flex !important; }
+    .mobile-fab { display: flex !important; }
     .stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
     .dashboard-hero { grid-template-columns: 1fr !important; }
   }
@@ -1515,6 +1516,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const [sortDir, setSortDir] = useState("desc");
   const [tradeSearch, setTradeSearch] = useState("");
   const [journalSearch, setJournalSearch] = useState("");
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
 
   const now = new Date();
   const [calMonth, setCalMonth] = useState(now.getMonth());
@@ -3301,6 +3303,139 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           <span style={{ fontSize: 14 }}>⎋</span> Log out
         </button>
       </div>
+
+      {/* Mobile-only bottom tab bar — hidden on desktop via CSS, shown in place of the sidebar under 780px */}
+      <nav className="mobile-bottom-nav" style={{
+        position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 40,
+        background: COLORS.sidebar, borderTop: "1px solid rgba(255,255,255,0.08)",
+        padding: "6px 4px calc(6px + env(safe-area-inset-bottom))",
+        alignItems: "center", justifyContent: "space-around",
+      }}>
+        {[
+          { key: "dashboard", label: "Home", Icon: IconDashboard },
+          { key: "media", label: "Trades", Icon: IconTrades },
+          { key: "calendar", label: "Stats", Icon: IconCalendar },
+          { key: "journal", label: "Journal", Icon: IconJournal },
+        ].map(({ key, label, Icon }) => {
+          const active = tab === key;
+          return (
+            <button
+              key={key}
+              onClick={() => { setTab(key); setMobileMoreOpen(false); }}
+              style={{
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flex: 1,
+                background: "transparent", border: "none", cursor: "pointer",
+                color: active ? "#fff" : "#9599B0", padding: "4px 2px",
+              }}
+            >
+              <Icon active={active} />
+              <span style={{ fontSize: 10, fontWeight: 600 }}>{label}</span>
+            </button>
+          );
+        })}
+        <button
+          onClick={() => setMobileMoreOpen(true)}
+          style={{
+            display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flex: 1,
+            background: "transparent", border: "none", cursor: "pointer", color: "#9599B0", padding: "4px 2px",
+          }}
+        >
+          <span style={{ fontSize: 19, lineHeight: 1 }}>⋯</span>
+          <span style={{ fontSize: 10, fontWeight: 600 }}>More</span>
+        </button>
+      </nav>
+
+      {/* Floating Add Trade button — replaces the sidebar's Add Trade button on mobile */}
+      <button
+        className="mobile-fab"
+        onClick={() => setTab("trades")}
+        aria-label="Add trade"
+        style={{
+          position: "fixed", right: 16, bottom: "calc(70px + env(safe-area-inset-bottom))", zIndex: 41,
+          width: 56, height: 56, borderRadius: "50%", alignItems: "center", justifyContent: "center",
+          background: targets.addTradeColor || COLORS.accent, color: "#fff", border: "none",
+          fontSize: 26, fontWeight: 700, lineHeight: 1, boxShadow: "0 4px 14px rgba(124,92,252,0.5)", cursor: "pointer",
+        }}
+      >
+        +
+      </button>
+
+      {/* Mobile "More" sheet — the rest of the sidebar's items, for phones */}
+      {mobileMoreOpen && (
+        <div
+          onClick={() => setMobileMoreOpen(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(20,20,35,0.45)", zIndex: 46, display: "flex", alignItems: "flex-end" }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: COLORS.sidebar, borderTopLeftRadius: 18, borderTopRightRadius: 18,
+              padding: "14px 12px calc(16px + env(safe-area-inset-bottom))", width: "100%", maxHeight: "75vh", overflowY: "auto",
+              display: "grid", gap: 4,
+            }}
+          >
+            <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.2)", margin: "0 auto 10px" }} />
+            {[
+              { key: "patterns", label: "Patterns", Icon: IconPatterns },
+              { key: "friends", label: "Friends", Icon: IconFriends },
+              { key: "leaderboard", label: "Leaderboard", Icon: IconLeaderboard },
+            ].map(({ key, label, Icon }) => {
+              const active = tab === key;
+              return (
+                <button
+                  key={key}
+                  onClick={() => { setTab(key); setMobileMoreOpen(false); }}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 10,
+                    background: active ? (targets.selectedTabColor || COLORS.sidebarActive) : "transparent",
+                    color: active ? "#fff" : "#C7CAD6",
+                    border: "none", borderRadius: 10, padding: "12px 14px",
+                    fontSize: 14, fontWeight: 600, cursor: "pointer", textAlign: "left",
+                  }}
+                >
+                  <Icon active={active} />
+                  {label}
+                </button>
+              );
+            })}
+            <div style={{ height: 1, background: "rgba(255,255,255,0.08)", margin: "6px 4px" }} />
+            <button
+              onClick={() => { setTab("feedback"); setMobileMoreOpen(false); }}
+              style={{
+                display: "flex", alignItems: "center", gap: 10,
+                background: tab === "feedback" ? (targets.selectedTabColor || COLORS.sidebarActive) : "transparent",
+                color: tab === "feedback" ? "#fff" : "#C7CAD6",
+                border: "none", borderRadius: 10, padding: "12px 14px", fontSize: 14, fontWeight: 600, cursor: "pointer", textAlign: "left",
+              }}
+            >
+              <span style={{ fontSize: 16 }}>💬</span> Feedback
+            </button>
+            <button
+              onClick={() => { setTab("settings"); setMobileMoreOpen(false); }}
+              style={{
+                display: "flex", alignItems: "center", gap: 10,
+                background: tab === "settings" ? (targets.selectedTabColor || COLORS.sidebarActive) : "transparent",
+                color: tab === "settings" ? "#fff" : "#C7CAD6",
+                border: "none", borderRadius: 10, padding: "12px 14px", fontSize: 14, fontWeight: 600, cursor: "pointer", textAlign: "left",
+              }}
+            >
+              <span style={{ fontSize: 16 }}>⚙️</span> Settings
+            </button>
+            <button
+              onClick={toggleTheme}
+              style={{ display: "flex", alignItems: "center", gap: 10, background: "transparent", color: "#C7CAD6", border: "none", borderRadius: 10, padding: "12px 14px", fontSize: 14, fontWeight: 600, cursor: "pointer", textAlign: "left" }}
+            >
+              <span style={{ fontSize: 16 }}>{theme === "light" ? "🌙" : "☀️"}</span> {theme === "light" ? "Dark mode" : "Light mode"}
+            </button>
+            <button
+              onClick={onLogout}
+              style={{ display: "flex", alignItems: "center", gap: 10, background: "transparent", color: "#C7CAD6", border: "none", borderRadius: 10, padding: "12px 14px", fontSize: 14, fontWeight: 600, cursor: "pointer", textAlign: "left" }}
+            >
+              <span style={{ fontSize: 16 }}>⎋</span> Log out
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main content */}
       <div className="main-content" style={{ flex: 1, padding: "28px 32px 60px", width: "100%" }}>
