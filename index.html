@@ -3346,13 +3346,13 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                     {weekDigest.best && (
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                         <span style={{ fontSize: 12, color: COLORS.textMuted }}>Best trade</span>
-                        <span className="mono" style={{ fontSize: 13, fontWeight: 700, color: COLORS.win }}>{fmtMoney(weekDigest.best.pnl)}</span>
+                        <span className="mono" style={{ fontSize: 13, fontWeight: 700, color: weekDigest.best.pnl >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(weekDigest.best.pnl)}</span>
                       </div>
                     )}
                     {weekDigest.worst && (
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                         <span style={{ fontSize: 12, color: COLORS.textMuted }}>Worst trade</span>
-                        <span className="mono" style={{ fontSize: 13, fontWeight: 700, color: COLORS.loss }}>{fmtMoney(weekDigest.worst.pnl)}</span>
+                        <span className="mono" style={{ fontSize: 13, fontWeight: 700, color: weekDigest.worst.pnl >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(weekDigest.worst.pnl)}</span>
                       </div>
                     )}
                     {weekDigest.adherence !== null && (
