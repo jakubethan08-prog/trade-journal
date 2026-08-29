@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>A+ Trades</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22%237C5CFC%22/><text x=%2250%22 y=%2265%22 font-size=%2242%22 text-anchor=%22middle%22 fill=%22white%22 font-family=%22Arial,sans-serif%22 font-weight=%22bold%22>A+</text></svg>">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="theme-color" content="#7C5CFC">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="A+ Trades">
 <style>
   html, body { margin: 0; padding: 0; background: #F3F4F9; }
   * { box-sizing: border-box; }
@@ -36,6 +42,15 @@
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.25.6/babel.min.js"></script>
 <script crossorigin src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  // file:// (local testing) can't register a service worker — only attempt
+  // this on an actual http(s) deployment.
+  if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("sw.js").catch(() => {});
+    });
+  }
+</script>
 
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useRef } = React;
@@ -288,7 +303,7 @@ function entryToRow(en, userId) {
 function rowToTargets(row) {
   if (!row) {
     return {
-      profitTarget: "", maxLoss: "", axisStep: "",
+      profitTarget: "", maxLoss: "", dailyLossLimit: "", axisStep: "",
       profitColor: "#16A34A", minBalanceColor: "#E23D45", growthColor: "",
       axisColor: "",
       calWinColor: "#16A34A", calLossColor: "#E23D45", calPayoutColor: "#0EA5E9",
@@ -298,6 +313,7 @@ function rowToTargets(row) {
   return {
     profitTarget: row.profit_target === null || row.profit_target === undefined ? "" : String(row.profit_target),
     maxLoss: row.max_loss === null || row.max_loss === undefined ? "" : String(row.max_loss),
+    dailyLossLimit: row.daily_loss_limit === null || row.daily_loss_limit === undefined ? "" : String(row.daily_loss_limit),
     axisStep: row.axis_step === null || row.axis_step === undefined ? "" : String(row.axis_step),
     profitColor: row.profit_color || "#16A34A",
     minBalanceColor: row.min_balance_color || "#E23D45",
@@ -316,6 +332,7 @@ function targetsToRow(t, userId) {
     user_id: userId,
     profit_target: t.profitTarget === "" || t.profitTarget === null || t.profitTarget === undefined ? null : Number(t.profitTarget),
     max_loss: t.maxLoss === "" || t.maxLoss === null || t.maxLoss === undefined ? null : Number(t.maxLoss),
+    daily_loss_limit: t.dailyLossLimit === "" || t.dailyLossLimit === null || t.dailyLossLimit === undefined ? null : Number(t.dailyLossLimit),
     axis_step: t.axisStep === "" || t.axisStep === null || t.axisStep === undefined ? null : Number(t.axisStep),
     profit_color: t.profitColor || "#16A34A",
     min_balance_color: t.minBalanceColor || "#E23D45",
@@ -991,7 +1008,7 @@ function EmptyState({ text, loading = false }) {
 
 // ---- Targets panel content, shared between the docked Settings card and the
 // pop-out floating window so edits (and the live chart underneath) match. ----
-function TargetsPanel({ targets, updateTargets, profitTargetHit, maxLossHit }) {
+function TargetsPanel({ targets, updateTargets, profitTargetHit, maxLossHit, dailyLossLimitHitToday }) {
   return (
     <>
       {/* Profit target */}
@@ -1024,6 +1041,25 @@ function TargetsPanel({ targets, updateTargets, profitTargetHit, maxLossHit }) {
           className="mono"
           style={{ ...inputStyle_() }}
         />
+      </div>
+
+      {/* Daily loss limit — per account, unlike Max loss above which tracks the all-time peak */}
+      <div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <label style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600 }}>Daily loss limit</label>
+          {dailyLossLimitHitToday && <span style={{ fontSize: 11, color: COLORS.loss, fontWeight: 700 }}>Hit today ⛔</span>}
+        </div>
+        <input
+          type="number" step="0.01" min="0"
+          value={targets.dailyLossLimit}
+          onChange={(e) => updateTargets({ dailyLossLimit: e.target.value })}
+          placeholder="$0.00 per account"
+          className="mono"
+          style={{ ...inputStyle_() }}
+        />
+        <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 5 }}>
+          Per account, not combined — days that hit it are stamped "DLL" on the calendar.
+        </div>
       </div>
 
       {/* Axis */}
@@ -1477,6 +1513,8 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const [sortKey, setSortKey] = useState("date");
   const [tradesSubTab, setTradesSubTab] = useState("all");
   const [sortDir, setSortDir] = useState("desc");
+  const [tradeSearch, setTradeSearch] = useState("");
+  const [journalSearch, setJournalSearch] = useState("");
 
   const now = new Date();
   const [calMonth, setCalMonth] = useState(now.getMonth());
@@ -2971,6 +3009,17 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     }
     return acc;
   }, {});
+  // Daily loss limit is PER ACCOUNT, but a trade's stored pnl is already the
+  // combined total across accountCount accounts (see accountsMultiplier in
+  // addTrade) — divide back down before comparing.
+  const dailyLossLimitNum = targets.dailyLossLimit === "" || targets.dailyLossLimit === null || targets.dailyLossLimit === undefined
+    ? null : Number(targets.dailyLossLimit);
+  if (dailyLossLimitNum !== null && !Number.isNaN(dailyLossLimitNum)) {
+    const perAccountDivisor = accountCount || 1;
+    Object.values(dayMap).forEach((d) => {
+      d.dllHit = (d.total / perAccountDivisor) <= -Math.abs(dailyLossLimitNum);
+    });
+  }
 
   function pad2(n) { return String(n).padStart(2, "0"); }
   function buildCalendarWeeks(dayMapArg, year, month) {
@@ -3612,32 +3661,49 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               <button type="submit" style={primaryBtnStyle_()}>{tEntryType === "payout" ? "Add payout" : "Add trade"}</button>
             </form>
 
-            <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
-              {[{ v: "all", label: "All" }, { v: "trades", label: "Trades" }, { v: "payouts", label: "Payouts" }].map((opt) => (
-                <button
-                  key={opt.v}
-                  onClick={() => setTradesSubTab(opt.v)}
-                  style={{
-                    background: tradesSubTab === opt.v ? COLORS.accentSoft : "transparent",
-                    border: `1.5px solid ${tradesSubTab === opt.v ? COLORS.accent : COLORS.border}`,
-                    color: tradesSubTab === opt.v ? COLORS.accent : COLORS.textMuted,
-                    padding: "6px 14px", borderRadius: 20, fontSize: 12.5, fontWeight: 600, cursor: "pointer",
-                  }}
-                >
-                  {opt.label}
-                </button>
-              ))}
+            <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+              <div style={{ display: "flex", gap: 6 }}>
+                {[{ v: "all", label: "All" }, { v: "trades", label: "Trades" }, { v: "payouts", label: "Payouts" }].map((opt) => (
+                  <button
+                    key={opt.v}
+                    onClick={() => setTradesSubTab(opt.v)}
+                    style={{
+                      background: tradesSubTab === opt.v ? COLORS.accentSoft : "transparent",
+                      border: `1.5px solid ${tradesSubTab === opt.v ? COLORS.accent : COLORS.border}`,
+                      color: tradesSubTab === opt.v ? COLORS.accent : COLORS.textMuted,
+                      padding: "6px 14px", borderRadius: 20, fontSize: 12.5, fontWeight: 600, cursor: "pointer",
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="text"
+                value={tradeSearch}
+                onChange={(e) => setTradeSearch(e.target.value)}
+                placeholder="Search by symbol, side, or grade…"
+                style={{ ...inputStyle_(), flex: "1 1 220px", padding: "6px 12px" }}
+              />
+              {tradeSearch && (
+                <button type="button" onClick={() => setTradeSearch("")} style={ghostBtnStyle_()}>Clear</button>
+              )}
             </div>
 
             {(() => {
-              const visibleTrades =
+              const bySubTab =
                 tradesSubTab === "trades" ? trades.filter((t) => t.entryType !== "payout") :
                 tradesSubTab === "payouts" ? trades.filter((t) => t.entryType === "payout") :
                 trades;
+              const q = tradeSearch.trim().toLowerCase();
+              const visibleTrades = q
+                ? bySubTab.filter((t) => [t.symbol, t.side, t.grade, t.date].some((v) => (v || "").toLowerCase().includes(q)))
+                : bySubTab;
 
               if (visibleTrades.length === 0) {
                 return (
                   <EmptyState text={
+                    q ? `No ${tradesSubTab === "payouts" ? "payouts" : "trades"} match "${tradeSearch}".` :
                     tradesSubTab === "payouts" ? "No payouts logged yet." :
                     tradesSubTab === "trades" ? "No trades logged yet." :
                     "No trades logged yet. Add your first one above."
@@ -3913,6 +3979,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                       const cellColor = isWin ? calWin : calLoss;
                       const cellSoft = isWin ? calWin + "1E" : calLoss + "1E";
                       const hasPayout = !!(d && d.payoutTotal);
+                      const hitDLL = !!(d && d.dllHit);
                       return (
                         <div
                           key={ci}
@@ -3921,7 +3988,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                             position: "relative",
                             borderRadius: 10, minHeight: 74, padding: "8px 10px",
                             background: hasTrades ? cellSoft : COLORS.subtleBg,
-                            border: `1.5px solid ${hasTrades ? cellColor : COLORS.border}`,
+                            border: `1.5px solid ${hitDLL ? COLORS.loss : hasTrades ? cellColor : COLORS.border}`,
                             display: "flex", flexDirection: "column", justifyContent: "space-between",
                             cursor: hasTrades ? "pointer" : "default",
                             transition: "transform 0.1s ease",
@@ -3936,6 +4003,17 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                                 boxShadow: `0 0 0 2px ${COLORS.card}`,
                               }}
                             />
+                          )}
+                          {hitDLL && (
+                            <div
+                              title="Daily loss limit hit"
+                              style={{
+                                position: "absolute", top: 5, left: 5, fontSize: 8.5, fontWeight: 800, letterSpacing: "0.03em",
+                                color: "#fff", background: COLORS.loss, borderRadius: 4, padding: "1px 4px",
+                              }}
+                            >
+                              DLL
+                            </div>
                           )}
                           <div style={{ fontSize: 13, color: hasTrades ? cellColor : COLORS.textMuted, fontWeight: 600 }}>
                             {cell.day}
@@ -4442,7 +4520,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                   <EmptyState text="Targets is popped out as a floating window — drag it around on the Performance tab to watch the chart update live. Click “Dock back here” above to bring it back." />
                 ) : (
                   <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 18, boxShadow: "0 1px 2px rgba(23,21,51,0.04)", display: "flex", flexDirection: "column", gap: 16 }}>
-                    <TargetsPanel targets={targets} updateTargets={updateTargets} profitTargetHit={profitTargetHit} maxLossHit={maxLossHit} />
+                    <TargetsPanel targets={targets} updateTargets={updateTargets} profitTargetHit={profitTargetHit} maxLossHit={maxLossHit} dailyLossLimitHitToday={!!(dayMap[todayStr()] && dayMap[todayStr()].dllHit)} />
                   </div>
                 )}
               </div>
@@ -4721,11 +4799,36 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               <button type="submit" style={primaryBtnStyle_()}>Save entry</button>
             </form>
 
-            {entries.length === 0 ? (
-              <EmptyState text="No journal entries yet. Write your first one above." />
-            ) : (
+            {entries.length > 0 && (
+              <div style={{ display: "flex", gap: 10, marginBottom: 14, alignItems: "center" }}>
+                <input
+                  type="text"
+                  value={journalSearch}
+                  onChange={(e) => setJournalSearch(e.target.value)}
+                  placeholder="Search journal entries…"
+                  style={{ ...inputStyle_(), flex: "1 1 220px", padding: "6px 12px" }}
+                />
+                {journalSearch && (
+                  <button type="button" onClick={() => setJournalSearch("")} style={ghostBtnStyle_()}>Clear</button>
+                )}
+              </div>
+            )}
+
+            {(() => {
+              const jq = journalSearch.trim().toLowerCase();
+              const filteredEntries = jq
+                ? entries.filter((en) => [en.feelingDetail, en.conditions, en.notes, moodInfo(en.mood).label].some((v) => (v || "").toLowerCase().includes(jq)))
+                : entries;
+
+              if (entries.length === 0) {
+                return <EmptyState text="No journal entries yet. Write your first one above." />;
+              }
+              if (filteredEntries.length === 0) {
+                return <EmptyState text={`No journal entries match "${journalSearch}".`} />;
+              }
+              return (
               <div style={{ display: "grid", gap: 10 }}>
-                {[...entries]
+                {[...filteredEntries]
                   .sort((a, b) => (tradeNumberMap.get(b.tradeId) || -1) - (tradeNumberMap.get(a.tradeId) || -1))
                   .map((en) => {
                   const mi = moodInfo(en.mood);
@@ -4766,7 +4869,8 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                   );
                 })}
               </div>
-            )}
+              );
+            })()}
           </>
         )}
       </div>
@@ -4797,6 +4901,12 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                 </div>
                 <button onClick={() => setSelectedDay(null)} style={deleteBtnStyle_()} aria-label="Close">✕</button>
               </div>
+
+              {dayMap[selectedDay] && dayMap[selectedDay].dllHit && (
+                <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "8px 12px", borderRadius: 10, fontSize: 12.5, fontWeight: 700, marginBottom: 16 }}>
+                  ⛔ Daily loss limit hit this day
+                </div>
+              )}
 
               <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>TRADES ({dayTrades.length})</div>
               <div style={{ display: "grid", gap: 8, marginBottom: 20 }}>
@@ -5429,7 +5539,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
 
       {targetsPopped && (
         <FloatingTargetsWindow onClose={() => setTargetsPopped(false)}>
-          <TargetsPanel targets={targets} updateTargets={updateTargets} profitTargetHit={profitTargetHit} maxLossHit={maxLossHit} />
+          <TargetsPanel targets={targets} updateTargets={updateTargets} profitTargetHit={profitTargetHit} maxLossHit={maxLossHit} dailyLossLimitHitToday={!!(dayMap[todayStr()] && dayMap[todayStr()].dllHit)} />
         </FloatingTargetsWindow>
       )}
 

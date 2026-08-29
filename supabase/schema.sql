@@ -151,6 +151,12 @@ alter table public.targets add column if not exists selected_tab_color text;
 alter table public.targets add column if not exists add_trade_color text;
 alter table public.targets add column if not exists welcome_banner_color text;
 
+-- Daily loss limit: a PER-ACCOUNT dollar figure (unlike max_loss, which
+-- tracks the all-time equity peak) — the app divides a day's total P&L by
+-- profiles.account_count before comparing, since a stored trade's pnl is
+-- already the combined total across all of a user's accounts.
+alter table public.targets add column if not exists daily_loss_limit numeric;
+
 alter table public.targets enable row level security;
 
 drop policy if exists "select own targets" on public.targets;
