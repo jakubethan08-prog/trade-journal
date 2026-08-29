@@ -37,8 +37,13 @@
   button:not(:disabled):hover, a:hover, [style*="cursor: pointer"]:hover {
     filter: brightness(0.96);
   }
+  /* filter (not transform: scale) on purpose — :active bubbles to ancestors
+     in CSS, so a scale here would also fire on an enclosing clickable row at
+     the same time as a small button inside it, shifting the button's actual
+     position by a pixel or two mid-click and making clicks land on the row
+     instead. filter/brightness has no geometry, so it can't cause that. */
   button:not(:disabled):active, [style*="cursor: pointer"]:active {
-    transform: scale(0.97);
+    filter: brightness(0.88);
   }
   /* Dark theme is a manual JS toggle (not tied to OS prefers-color-scheme),
      reflected as this body class — darkening reads as "disappearing" against
