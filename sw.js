@@ -1,25 +1,18 @@
-// Minimal service worker — its only job is to make the app installable and
-// let the shell reload when briefly offline. It deliberately does NOT try to
-// cache Supabase API calls: this is a live, multi-user app, so serving stale
-// trade/journal data would be worse than just failing the request offline.
-const CACHE_NAME = "a-plus-trades-shell-v1";
-const SHELL_URLS = ["./", "./index.html", "./manifest.json", "./icons/icon-192.png", "./icons/icon-512.png"];
-
-self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_URLS)));
-  self.skipWaiting();
-});
+// This service worker turned out to break the app: intercepting the
+// cross-origin CDN <script> requests (React/Babel/Supabase-js) caused them
+// to fail on reload, producing a blank white page for real users.
+// Rather than risk getting the fetch-passthrough edge cases right a second
+// time, this version's only job is to remove itself from everyone who
+// already has the broken one registered, and reload their tab so it loads
+// fresh with no service worker involved at all.
+self.addEventListener("install", () => self.skipWaiting());
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))))
+    (async () => {
+      await self.registration.unregister();
+      const clientsList = await self.clients.matchAll({ type: "window" });
+      clientsList.forEach((client) => client.navigate(client.url));
+    })()
   );
-  self.clients.claim();
-});
-
-// Network-first: always try live first so data stays fresh; only fall back
-// to the cached shell when there's genuinely no connection.
-self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET") return;
-  event.respondWith(fetch(event.request).catch(() => caches.match(event.request)));
 });

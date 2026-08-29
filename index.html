@@ -44,12 +44,15 @@
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.25.6/babel.min.js"></script>
 <script crossorigin src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-  // file:// (local testing) can't register a service worker — only attempt
-  // this on an actual http(s) deployment.
-  if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("sw.js").catch(() => {});
-    });
+  // A service worker here previously broke the app (it intercepted the
+  // cross-origin CDN <script> requests and caused them to fail on reload,
+  // producing a blank white page). Actively unregister any leftover
+  // registration so anyone who already has it recovers immediately, rather
+  // than waiting on the browser's own service-worker update-check cycle.
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.getRegistrations().then((regs) => {
+      regs.forEach((r) => r.unregister());
+    }).catch(() => {});
   }
 </script>
 
