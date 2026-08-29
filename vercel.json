@@ -5,7 +5,7 @@
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://upjnahcvbajwydsodpfw.supabase.co; media-src 'self' https://upjnahcvbajwydsodpfw.supabase.co; connect-src 'self' https://upjnahcvbajwydsodpfw.supabase.co wss://upjnahcvbajwydsodpfw.supabase.co; font-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https://upjnahcvbajwydsodpfw.supabase.co; media-src 'self' https://upjnahcvbajwydsodpfw.supabase.co; connect-src 'self' https://upjnahcvbajwydsodpfw.supabase.co wss://upjnahcvbajwydsodpfw.supabase.co; font-src 'self' https://fonts.gstatic.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         },
         {
           "key": "X-Content-Type-Options",
