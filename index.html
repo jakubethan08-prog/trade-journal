@@ -23,8 +23,31 @@
   .mono { font-family: 'SFMono-Regular', ui-monospace, 'IBM Plex Mono', Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; font-feature-settings: "zero" 0, "cv01" 0, "ss20" 0; }
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-thumb { background: #D8DAE8; border-radius: 8px; }
-  @keyframes emptyStatePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
-  .empty-state-pulse { animation: emptyStatePulse 1.4s ease-in-out infinite; }
+  /* Everything clickable gets the same feel: a quick settle on state change,
+     a slight darken on hover, a slight press on click. The [style*="cursor:
+     pointer"] selector catches the many onClick'd divs (calendar cells, list
+     rows, cards) that aren't <button> elements, without editing each one. */
+  button, [style*="cursor: pointer"] {
+    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease,
+      box-shadow 0.15s ease, transform 0.1s ease, opacity 0.15s ease, filter 0.15s ease;
+  }
+  button:not(:disabled):hover, a:hover, [style*="cursor: pointer"]:hover {
+    filter: brightness(0.96);
+  }
+  button:not(:disabled):active, [style*="cursor: pointer"]:active {
+    transform: scale(0.97);
+  }
+  /* Dark theme is a manual JS toggle (not tied to OS prefers-color-scheme),
+     reflected as this body class — darkening reads as "disappearing" against
+     near-black backgrounds, so brighten instead. */
+  body.dark-theme button:not(:disabled):hover, body.dark-theme [style*="cursor: pointer"]:hover {
+    filter: brightness(1.15);
+  }
+
+  /* Loading skeleton — a moving shimmer instead of a static "Loading…" line */
+  @keyframes skeletonShimmer { 0% { background-position: -300px 0; } 100% { background-position: 300px 0; } }
+  .skeleton-bar { background-size: 300px 100%; animation: skeletonShimmer 1.3s ease-in-out infinite; }
+
   .mobile-bottom-nav, .mobile-fab { display: none; }
   @media (max-width: 780px) {
     .sidebar { display: none !important; }
@@ -597,7 +620,7 @@ function IconLeaderboard({ active }) {
 // ---- Stable, top-level presentational components ----
 function StatCard({ label, value, color }) {
   return (
-    <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: "16px 18px", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+    <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "16px 18px", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
       <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 500, marginBottom: 8 }}>{label}</div>
       <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: color || COLORS.text }}>{value}</div>
     </div>
@@ -996,12 +1019,27 @@ function DrawdownChart({ points, width = 640, height = 220 }) {
 // same shape and spot in the layout either way, but loading drops the dashed
 // "empty" border and pulses gently so it never reads as a dead end.
 function EmptyState({ text, loading = false }) {
+  if (loading) {
+    return (
+      <div style={{ border: `1.5px solid ${COLORS.border}`, borderRadius: 16, padding: "20px 18px", background: COLORS.subtleBg, display: "grid", gap: 10 }}>
+        {[100, 82, 60].map((w, i) => (
+          <div
+            key={i}
+            className="skeleton-bar"
+            style={{
+              height: 12, borderRadius: 6, width: `${w}%`,
+              backgroundImage: `linear-gradient(90deg, ${COLORS.border} 25%, ${COLORS.card} 50%, ${COLORS.border} 75%)`,
+            }}
+          />
+        ))}
+      </div>
+    );
+  }
   return (
     <div
-      className={loading ? "empty-state-pulse" : undefined}
       style={{
-        border: `1.5px ${loading ? "solid" : "dashed"} ${COLORS.border}`,
-        borderRadius: 14, padding: "36px 16px", textAlign: "center",
+        border: `1.5px dashed ${COLORS.border}`,
+        borderRadius: 16, padding: "36px 16px", textAlign: "center",
         color: COLORS.textMuted, fontSize: 13.5, background: COLORS.subtleBg,
       }}
     >
@@ -2498,6 +2536,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   }
   useEffect(() => {
     document.body.style.background = COLORS.bg;
+    document.body.classList.toggle("dark-theme", theme === "dark");
   }, [theme]);
 
   if (dataLoading) {
@@ -3578,7 +3617,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                   const label = (f.otherProfile && (f.otherProfile.display_name || f.otherProfile.email)) || "Unknown";
                   const friendAccounts = f.otherProfile ? formatAccounts(f.otherProfile.account_count, f.otherProfile.account_size) : null;
                   return (
-                    <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                    <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
                       <div style={{ fontSize: 14, fontWeight: 700 }}>{label}</div>
                       {stats ? (
                         <div className="mono" style={{ display: "flex", alignItems: "center", gap: 20, fontSize: 13, flexWrap: "wrap" }}>
@@ -3609,7 +3648,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                 {formatAccounts(accountCount, accountSize) || "Accounts"}
               </button>
               {accountsPopoverOpen && (
-                <div style={{ position: "absolute", top: 52, right: 16, zIndex: 20, background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 16, boxShadow: "0 10px 30px rgba(20,20,35,0.3)", display: "grid", gap: 10, width: 220 }}>
+                <div style={{ position: "absolute", top: 52, right: 16, zIndex: 20, background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 16, boxShadow: "0 20px 60px rgba(20,20,35,0.35)", display: "grid", gap: 10, width: 220 }}>
                   <Field label="Number of accounts">
                     <input
                       type="number" step="0.1" min="0"
@@ -3883,7 +3922,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                   else { setSortKey(key); setSortDir("desc"); }
                 }
                 return (
-                  <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, overflow: "hidden", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                  <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, overflow: "hidden", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
                     <div style={{ overflowX: "auto" }}>
                       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                         <thead>
@@ -4091,7 +4130,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               </button>
             </div>
 
-            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 14, boxShadow: "0 1px 2px rgba(23,21,51,0.04)", overflowX: "auto" }}>
+            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 14, boxShadow: "0 1px 2px rgba(23,21,51,0.04)", overflowX: "auto" }}>
               <div style={{ minWidth: 670 }}>
                 {/* header row */}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr) 110px 110px", gap: 8, marginBottom: 8 }}>
@@ -4327,7 +4366,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
             ) : (
               <div style={{ display: "grid", gap: 10, marginBottom: 28 }}>
                 {sortedPatternPerf.map((p) => (
-                  <div key={p.id} style={{ position: "relative", background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                  <div key={p.id} style={{ position: "relative", background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
                     <span className="mono" style={{ position: "absolute", top: 14, left: 16, fontSize: 11.5, color: COLORS.textMuted, fontWeight: 700 }}>#{p.number}</span>
                     <button onClick={() => deletePatternRow(p.id)} style={{ ...deleteBtnStyle_(), position: "absolute", top: 12, right: 12 }} aria-label="Delete pattern">✕</button>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 10, padding: "0 30px" }}>
@@ -4432,7 +4471,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                     const barWidth = Math.max((Math.abs(p.total) / maxAbs) * 100, 4);
                     const expanded = expandedMoodKey === p.moodKey;
                     return (
-                      <div key={p.moodKey} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                      <div key={p.moodKey} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
                         <div
                           onClick={() => setExpandedMoodKey(expanded ? null : p.moodKey)}
                           style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10, cursor: "pointer" }}
@@ -4528,7 +4567,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                     <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>REQUESTS RECEIVED</div>
                     <div style={{ display: "grid", gap: 10, marginBottom: 24 }}>
                       {friendships.filter((f) => f.status === "pending" && !f.iAmRequester).map((f) => (
-                        <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                        <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
                           <div style={{ fontSize: 14, fontWeight: 600 }}>{(f.otherProfile && (f.otherProfile.display_name || f.otherProfile.email)) || "Unknown"}</div>
                           <div style={{ display: "flex", gap: 8 }}>
                             <button onClick={() => respondToFriendRequest(f.id, "accepted")} style={primaryBtnStyle_()}>Accept</button>
@@ -4545,7 +4584,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                     <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>REQUESTS SENT</div>
                     <div style={{ display: "grid", gap: 10, marginBottom: 24 }}>
                       {friendships.filter((f) => f.status === "pending" && f.iAmRequester).map((f) => (
-                        <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                        <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
                           <div style={{ fontSize: 14, fontWeight: 600 }}>{(f.otherProfile && (f.otherProfile.display_name || f.otherProfile.email)) || "Unknown"}</div>
                           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                             <span style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600 }}>Pending</span>
@@ -4563,7 +4602,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                 ) : (
                   <div style={{ display: "grid", gap: 10 }}>
                     {acceptedFriends.map((f) => (
-                      <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                      <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
                         <button
                           onClick={() => openFriendPerformance(f)}
                           style={{ background: "transparent", border: "none", padding: 0, fontSize: 14, fontWeight: 600, color: COLORS.text, cursor: "pointer", textAlign: "left" }}
@@ -4630,7 +4669,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                     key={g.id}
                     onClick={() => openGroupModal(g)}
                     style={{
-                      background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16,
+                      background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16,
                       display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
                       boxShadow: "0 1px 2px rgba(23,21,51,0.04)", cursor: "pointer", textAlign: "left", width: "100%",
                     }}
@@ -4817,7 +4856,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                       style={{
                         background: isMe ? (targets.selectedTabColor || COLORS.accent) + "1A" : COLORS.card,
                         border: `1.5px solid ${isMe ? (targets.selectedTabColor || COLORS.accent) : COLORS.border}`,
-                        borderRadius: 14, padding: "14px 18px",
+                        borderRadius: 16, padding: "14px 18px",
                         display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap",
                         boxShadow: "0 1px 2px rgba(23,21,51,0.04)",
                       }}
@@ -4872,7 +4911,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
             ) : (
               <div style={{ display: "grid", gap: 10 }}>
                 {pastFeedback.map((f) => (
-                  <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                  <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
                     {isFeedbackAdmin && (
                       <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.accent, marginBottom: 6 }}>
                         {f.display_name || f.email || "Unknown user"}
@@ -4972,7 +5011,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                   const mi = moodInfo(en.mood);
                   const linkedTrade = en.tradeId ? findTrade(en.tradeId) : null;
                   return (
-                    <div key={en.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                    <div key={en.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                           <span className="mono" style={{ fontSize: 12.5, color: COLORS.textMuted }}>{en.date}</span>
@@ -5719,8 +5758,8 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           ? { position: "fixed", inset: 0, zIndex: 65, background: COLORS.bg, display: "flex", flexDirection: "column" }
           : {
               position: "fixed", left: groupWinPos.x, top: groupWinPos.y, width: groupWinSize.w, height: groupWinSize.h,
-              zIndex: 65, background: COLORS.bg, borderRadius: 14, border: `1px solid ${COLORS.border}`,
-              boxShadow: "0 20px 60px rgba(20,20,35,0.45)", display: "flex", flexDirection: "column", overflow: "hidden",
+              zIndex: 65, background: COLORS.bg, borderRadius: 16, border: `1px solid ${COLORS.border}`,
+              boxShadow: "0 20px 60px rgba(20,20,35,0.35)", display: "flex", flexDirection: "column", overflow: "hidden",
             };
 
         return (
@@ -5991,6 +6030,9 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
 function App() {
   const [theme] = useState(() => loadLocal(THEME_KEY, "light"));
   applyTheme(theme); // so the auth/paywall screens respect the stored theme too
+  useEffect(() => {
+    document.body.classList.toggle("dark-theme", theme === "dark");
+  }, [theme]);
 
   const [session, setSession] = useState(undefined); // undefined = checking, null = signed out
   const [profile, setProfile] = useState(null);
