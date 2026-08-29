@@ -74,6 +74,11 @@ create table if not exists public.trades (
   created_at timestamptz not null default now()
 );
 
+-- rules_followed: optional per-trade "did I actually follow my plan?" flag.
+-- null = not answered, true/false = answered. Powers the rule-adherence
+-- rate shown per pattern, separate from raw win/loss outcome.
+alter table public.trades add column if not exists rules_followed boolean;
+
 create index if not exists trades_user_date_idx on public.trades (user_id, date);
 
 alter table public.trades enable row level security;
@@ -174,6 +179,11 @@ create table if not exists public.trade_media (
   created_at timestamptz not null default now()
 );
 
+-- annotations: user-drawn markers (entry/stop-loss/take-profit points) laid
+-- over an image, stored as [{type, x, y}] with x/y as 0-100 percentages so
+-- they replay correctly at any display size.
+alter table public.trade_media add column if not exists annotations jsonb not null default '[]'::jsonb;
+
 create index if not exists trade_media_trade_idx on public.trade_media (trade_id);
 
 alter table public.trade_media enable row level security;
@@ -184,6 +194,9 @@ create policy "select own trade media" on public.trade_media
 drop policy if exists "insert own trade media" on public.trade_media;
 create policy "insert own trade media" on public.trade_media
   for insert with check (auth.uid() = user_id);
+drop policy if exists "update own trade media" on public.trade_media;
+create policy "update own trade media" on public.trade_media
+  for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 drop policy if exists "delete own trade media" on public.trade_media;
 create policy "delete own trade media" on public.trade_media
   for delete using (auth.uid() = user_id);

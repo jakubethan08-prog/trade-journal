@@ -17,12 +17,15 @@
   .mono { font-family: 'SFMono-Regular', ui-monospace, 'IBM Plex Mono', Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; font-feature-settings: "zero" 0, "cv01" 0, "ss20" 0; }
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-thumb { background: #D8DAE8; border-radius: 8px; }
+  @keyframes emptyStatePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+  .empty-state-pulse { animation: emptyStatePulse 1.4s ease-in-out infinite; }
   @media (max-width: 780px) {
     .sidebar { flex-direction: row !important; width: 100% !important; height: auto !important; position: static !important; padding: 8px 10px !important; gap: 4px !important; }
     .sidebar .logo-block { display: none !important; }
     .sidebar nav { flex-direction: row !important; width: 100%; justify-content: space-around; }
     .main-content { margin-left: 0 !important; }
     .stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
+    .dashboard-hero { grid-template-columns: 1fr !important; }
   }
 </style>
 </head>
@@ -102,6 +105,18 @@ function applyTheme(themeName) {
 }
 
 const GRADES = ["B-", "B", "B+", "A-", "A", "A+", "A++"];
+// Annotation marker types for drawing entry/SL/TP directly onto a trade
+// screenshot. Colors resolve live from COLORS (not baked in here) so they
+// stay correct across the light/dark theme toggle.
+const MARKER_TYPES = [
+  { key: "entry", label: "Entry", colorKey: "win" },
+  { key: "sl", label: "Stop Loss", colorKey: "loss" },
+  { key: "tp", label: "Take Profit", colorKey: "accent" },
+];
+function markerColor(key) {
+  const mt = MARKER_TYPES.find((m) => m.key === key);
+  return (mt && COLORS[mt.colorKey]) || COLORS.accent;
+}
 const GRADE_RANK = Object.fromEntries(GRADES.map((g, i) => [g, i]));
 function gradeColor(grade) {
   if (!grade) return null;
@@ -229,6 +244,7 @@ function rowToTrade(row) {
     rr: row.rr === null || row.rr === undefined ? null : Number(row.rr),
     grade: row.grade || null,
     entryType: row.entry_type,
+    rulesFollowed: row.rules_followed === null || row.rules_followed === undefined ? null : row.rules_followed,
     media: [],
   };
 }
@@ -244,6 +260,7 @@ function tradeToRow(t, userId) {
     rr: t.rr === "" || t.rr === null || t.rr === undefined ? null : Number(t.rr),
     grade: t.grade || null,
     entry_type: t.entryType || "trade",
+    rules_followed: t.rulesFollowed === undefined ? null : t.rulesFollowed,
   };
 }
 function rowToEntry(row) {
@@ -313,7 +330,7 @@ function targetsToRow(t, userId) {
   };
 }
 function rowToMedia(row) {
-  return { id: row.id, type: row.type, name: row.name, storagePath: row.storage_path, tradeId: row.trade_id };
+  return { id: row.id, type: row.type, name: row.name, storagePath: row.storage_path, tradeId: row.trade_id, annotations: row.annotations || [] };
 }
 
 // ---- Trade media modal (stable top-level component) ----
@@ -954,9 +971,19 @@ function DrawdownChart({ points, width = 640, height = 220 }) {
   );
 }
 
-function EmptyState({ text }) {
+// `loading` distinguishes "still fetching" from "confirmed nothing here" —
+// same shape and spot in the layout either way, but loading drops the dashed
+// "empty" border and pulses gently so it never reads as a dead end.
+function EmptyState({ text, loading = false }) {
   return (
-    <div style={{ border: `1.5px dashed ${COLORS.border}`, borderRadius: 14, padding: "36px 16px", textAlign: "center", color: COLORS.textMuted, fontSize: 13.5, background: COLORS.subtleBg }}>
+    <div
+      className={loading ? "empty-state-pulse" : undefined}
+      style={{
+        border: `1.5px ${loading ? "solid" : "dashed"} ${COLORS.border}`,
+        borderRadius: 14, padding: "36px 16px", textAlign: "center",
+        color: COLORS.textMuted, fontSize: 13.5, background: COLORS.subtleBg,
+      }}
+    >
       {text}
     </div>
   );
@@ -1445,6 +1472,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const [tRisk, setTRisk] = useState("");
   const [tRR, setTRR] = useState("");
   const [tGrade, setTGrade] = useState("");
+  const [tRulesFollowed, setTRulesFollowed] = useState(null); // null = not set, true/false = answered
 
   const [sortKey, setSortKey] = useState("date");
   const [tradesSubTab, setTradesSubTab] = useState("all");
@@ -1564,6 +1592,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   const [expandedMoodKey, setExpandedMoodKey] = useState(null);
   const [patternSortBy, setPatternSortBy] = useState("winRate"); // 'number' | 'pnl' | 'winRate' | 'grade' | 'frequency'
   const [durationViewMode, setDurationViewMode] = useState("pctTrades"); // 'pctTrades' | 'winRate'
+  const [hoveredDurationBucket, setHoveredDurationBucket] = useState(null);
   const [tConfluenceEntries, setTConfluenceEntries] = useState([]); // [{ localId, confluenceId, timeframe, points }]
   const [pickConfluenceId, setPickConfluenceId] = useState("");
   const [pickTimeframe, setPickTimeframe] = useState("");
@@ -2458,6 +2487,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       duration: (Number(tDurH) || 0) * 3600 + (Number(tDurM) || 0) * 60 + (Number(tDurS) || 0),
       symbol: tSymbol.trim(),
       side: tSide, risk: tRisk === "" ? null : Number(tRisk), rr: tRR === "" ? null : Number(tRR), grade: tGrade || null, entryType: tEntryType,
+      rulesFollowed: tEntryType === "trade" ? tRulesFollowed : null,
     };
     const { data, error } = await supabaseClient.from("trades").insert(tradeToRow(draft, userId)).select().single();
     if (error) { setTradeFormError("Couldn't save the trade — try again."); return; }
@@ -2489,7 +2519,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
 
     setSaveError(null);
     setTPnl(""); setTDurH(""); setTDurM(""); setTDurS(""); setTSymbol("");
-    setTRisk(""); setTRR(""); setTSide("long"); setTGrade(""); setTEntryType("trade");
+    setTRisk(""); setTRR(""); setTSide("long"); setTGrade(""); setTEntryType("trade"); setTRulesFollowed(null);
     setTConfluenceEntries([]); setPickConfluenceId(""); setPickTimeframe(""); setPickPoints(""); setTTargetTags([]);
   }
 
@@ -2582,6 +2612,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       risk: t.risk === null || t.risk === undefined ? "" : String(t.risk),
       rr: t.rr === null || t.rr === undefined ? "" : String(t.rr),
       grade: t.grade || "",
+      rulesFollowed: t.rulesFollowed === undefined ? null : t.rulesFollowed,
       error: null,
     });
   }
@@ -2602,6 +2633,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       risk: editForm.risk === "" ? null : Number(editForm.risk),
       rr: editForm.rr === "" ? null : Number(editForm.rr),
       grade: editForm.grade || null,
+      rules_followed: current.entryType === "payout" ? null : editForm.rulesFollowed,
     };
     const { error } = await supabaseClient.from("trades").update(patch).eq("id", editingTradeId);
     if (error) { setEditForm({ ...editForm, error: "Couldn't save changes — try again." }); return; }
@@ -2615,6 +2647,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       risk: patch.risk,
       rr: patch.rr,
       grade: patch.grade,
+      rulesFollowed: patch.rules_followed,
     } : t));
     setTrades(next);
     setEditingTradeId(null);
@@ -2677,6 +2710,13 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       const next = trades.map((t) => (t.id === tradeId ? { ...t, media: [...(t.media || []), ...newMedia] } : t));
       setTrades(next);
     }
+  }
+
+  async function updateMediaAnnotations(tradeId, mediaId, annotations) {
+    const { error } = await supabaseClient.from("trade_media").update({ annotations }).eq("id", mediaId);
+    if (error) { setSaveError("Couldn't save annotations — try again."); return; }
+    const next = trades.map((t) => (t.id === tradeId ? { ...t, media: (t.media || []).map((m) => (m.id === mediaId ? { ...m, annotations } : m)) } : t));
+    setTrades(next);
   }
 
   async function deleteMediaItem(tradeId, mediaId) {
@@ -2859,8 +2899,19 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
       // that figure is 0, not the closest-to-zero trade of the other kind.
       const biggestWin = winningTrades.length ? Math.max(...winningTrades.map((t) => t.pnl)) : 0;
       const biggestLoss = losingTrades.length ? Math.min(...losingTrades.map((t) => t.pnl)) : 0;
+      // Expectancy: the average $ result you'd expect per trade of this
+      // pattern, given its actual win rate and its actual average win/loss
+      // size — a truer measure of edge than win rate alone, since a pattern
+      // can win often but still lose money if losses run bigger than wins.
+      const avgWin = winningTrades.length ? winningTrades.reduce((s, t) => s + t.pnl, 0) / winningTrades.length : 0;
+      const avgLoss = losingTrades.length ? Math.abs(losingTrades.reduce((s, t) => s + t.pnl, 0) / losingTrades.length) : 0;
+      const winRateDec = count ? wins / count : 0;
+      const lossRateDec = count ? losingTrades.length / count : 0;
+      const expectancy = winRateDec * avgWin - lossRateDec * avgLoss;
+      const ruledTrades = taggedTrades.filter((t) => t.rulesFollowed === true || t.rulesFollowed === false);
+      const adherenceRate = ruledTrades.length ? Math.round((ruledTrades.filter((t) => t.rulesFollowed === true).length / ruledTrades.length) * 100) : null;
       const sortedTrades = [...taggedTrades].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-      return { id: p.id, name: p.name || null, number: patternNumberMap.get(p.id), label, confLabel, tagLabel, grade: p.grade, count, total, winRateP, biggestWin, biggestLoss, trades: sortedTrades };
+      return { id: p.id, name: p.name || null, number: patternNumberMap.get(p.id), label, confLabel, tagLabel, grade: p.grade, count, total, winRateP, biggestWin, biggestLoss, expectancy, adherenceRate, trades: sortedTrades };
     })
     // Never show (or let stats/naming attach to) a pattern with no trades
     // actually matching its exact combination — e.g. one left behind after
@@ -2872,11 +2923,41 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
     pnl: (a, b) => b.total - a.total,
     winRate: (a, b) => b.winRateP - a.winRateP,
     frequency: (a, b) => b.count - a.count,
+    expectancy: (a, b) => b.expectancy - a.expectancy,
   };
   const sortedPatternPerf = [...patternPerf].sort(patternSortComparators[patternSortBy] || patternSortComparators.winRate);
   const bestConfluencePattern = patternPerf.length
     ? [...patternPerf].sort((a, b) => b.total - a.total)[0]
     : null;
+
+  // ---- Weekly review digest: always the CURRENT Mon–Sun week, recomputed
+  // from live trade data on every render — there's nothing to "generate",
+  // it just reflects whatever's true right now. ----
+  const weekDigest = (() => {
+    const today = new Date();
+    const dow = today.getDay(); // 0 = Sun
+    const mondayOffset = dow === 0 ? -6 : 1 - dow;
+    const weekStart = new Date(today);
+    weekStart.setDate(today.getDate() + mondayOffset);
+    weekStart.setHours(0, 0, 0, 0);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 6);
+    const fmtISO = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+    const startStr = fmtISO(weekStart);
+    const endStr = fmtISO(weekEnd);
+    const weekTrades = tradingOnly.filter((t) => t.date >= startStr && t.date <= endStr);
+    const count = weekTrades.length;
+    const total = weekTrades.reduce((s, t) => s + t.pnl, 0);
+    const wins = weekTrades.filter((t) => t.pnl > 0).length;
+    const winRateWk = count ? Math.round((wins / count) * 100) : 0;
+    const best = weekTrades.length ? weekTrades.reduce((a, t) => (t.pnl > a.pnl ? t : a)) : null;
+    const worst = weekTrades.length ? weekTrades.reduce((a, t) => (t.pnl < a.pnl ? t : a)) : null;
+    const ruled = weekTrades.filter((t) => t.rulesFollowed === true || t.rulesFollowed === false);
+    const adherence = ruled.length ? Math.round((ruled.filter((t) => t.rulesFollowed === true).length / ruled.length) * 100) : null;
+    const fmtShort = (d) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    const rangeLabel = `${fmtShort(weekStart)} – ${fmtShort(weekEnd)}`;
+    return { rangeLabel, count, total, winRateWk, best, worst, adherence };
+  })();
 
   // ---- Calendar: group trades by date, build week rows with a trailing Total column ----
   const dayMap = trades.reduce((acc, t) => {
@@ -3215,12 +3296,77 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               </div>
             </div>
 
-            <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 12 }}>
+            <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
               <StatCard label="Total payouts" value={`$${totalPayouts.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} />
               <StatCard label="Account size" value={fmtMoney(currentBalance)} color={currentBalance >= 0 ? COLORS.win : COLORS.loss} />
               <StatCard label="Your total P&L" value={fmtMoney(totalPnl)} color={totalPnl >= 0 ? COLORS.win : COLORS.loss} />
               <StatCard label="Your win rate" value={`${winRate}%`} />
             </div>
+
+            <div className="dashboard-hero" style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 12, marginBottom: 20, alignItems: "stretch" }}>
+              <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Account growth</div>
+                <EquityChart
+                  points={equityCurve}
+                  height={200}
+                  profitTarget={profitTargetNum}
+                  maxLossLevel={maxLossLevel}
+                  axisStep={targets.axisStep === "" ? null : Number(targets.axisStep)}
+                  growthColor={targets.growthColor || null}
+                  profitColor={targets.profitColor || COLORS.win}
+                  minBalanceColor={targets.minBalanceColor || COLORS.loss}
+                  axisColor={targets.axisColor || null}
+                  payoutColor={targets.calPayoutColor || null}
+                />
+              </div>
+
+              <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, boxShadow: "0 1px 2px rgba(23,21,51,0.04)", display: "flex", flexDirection: "column" }}>
+                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 14 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>This week</div>
+                  <div style={{ fontSize: 11.5, color: COLORS.textMuted }}>{weekDigest.rangeLabel}</div>
+                </div>
+                {weekDigest.count === 0 ? (
+                  <div style={{ flex: 1, display: "flex", alignItems: "center" }}>
+                    <EmptyState text="No trades logged this week yet." />
+                  </div>
+                ) : (
+                  <div style={{ display: "grid", gap: 10 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                      <span style={{ fontSize: 12, color: COLORS.textMuted }}>P&L</span>
+                      <span className="mono" style={{ fontSize: 18, fontWeight: 700, color: weekDigest.total >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(weekDigest.total)}</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                      <span style={{ fontSize: 12, color: COLORS.textMuted }}>Win rate</span>
+                      <span className="mono" style={{ fontSize: 13, fontWeight: 700 }}>{weekDigest.winRateWk}%</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                      <span style={{ fontSize: 12, color: COLORS.textMuted }}>Trades</span>
+                      <span className="mono" style={{ fontSize: 13, fontWeight: 700 }}>{weekDigest.count}</span>
+                    </div>
+                    {weekDigest.best && (
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                        <span style={{ fontSize: 12, color: COLORS.textMuted }}>Best trade</span>
+                        <span className="mono" style={{ fontSize: 13, fontWeight: 700, color: COLORS.win }}>{fmtMoney(weekDigest.best.pnl)}</span>
+                      </div>
+                    )}
+                    {weekDigest.worst && (
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                        <span style={{ fontSize: 12, color: COLORS.textMuted }}>Worst trade</span>
+                        <span className="mono" style={{ fontSize: 13, fontWeight: 700, color: COLORS.loss }}>{fmtMoney(weekDigest.worst.pnl)}</span>
+                      </div>
+                    )}
+                    {weekDigest.adherence !== null && (
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                        <span style={{ fontSize: 12, color: COLORS.textMuted }}>Rule adherence</span>
+                        <span className="mono" style={{ fontSize: 13, fontWeight: 700 }}>{weekDigest.adherence}%</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: COLORS.textMuted, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>More stats</div>
             <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, marginBottom: 24 }}>
               <StatCard label="Best state of mind" value={bestPattern ? bestPattern.label : "—"} color={bestPattern ? COLORS.win : undefined} />
               <StatCard
@@ -3375,6 +3521,25 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                         <option key={g} value={g}>{g}</option>
                       ))}
                     </select>
+                  </Field>
+                  <Field label="Followed rules?" style={{ flex: "1 1 150px" }}>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      {[["Yes", true], ["No", false], ["—", null]].map(([lbl, val]) => (
+                        <button
+                          key={lbl}
+                          type="button"
+                          onClick={() => setTRulesFollowed(val)}
+                          style={{
+                            flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 12.5, fontWeight: 700, cursor: "pointer",
+                            border: `1px solid ${tRulesFollowed === val ? COLORS.accent : COLORS.border}`,
+                            background: tRulesFollowed === val ? COLORS.accentSoft : "transparent",
+                            color: tRulesFollowed === val ? COLORS.accent : COLORS.textMuted,
+                          }}
+                        >
+                          {lbl}
+                        </button>
+                      ))}
+                    </div>
                   </Field>
                 </div>
               )}
@@ -3865,14 +4030,29 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                     const barWidth = b.count ? Math.max((metric / maxMetric) * 100, 3) : 0;
                     const barColor = b.avgNetPnl >= 0 ? COLORS.win : COLORS.loss;
                     return (
-                      <div key={b.label} style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 8, alignItems: "center" }}>
+                      <div key={b.label} style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 8, alignItems: "center", position: "relative" }}>
                         <div style={{ fontSize: 11, color: COLORS.textMuted, textAlign: "right" }}>{b.label}</div>
-                        <div style={{ background: COLORS.subtleBg, borderRadius: 4, height: 14, position: "relative" }}>
+                        <div
+                          style={{ background: COLORS.subtleBg, borderRadius: 4, height: 14, position: "relative" }}
+                          onMouseEnter={() => b.count > 0 && setHoveredDurationBucket(b.label)}
+                          onMouseLeave={() => setHoveredDurationBucket(null)}
+                        >
                           {b.count > 0 && (
-                            <div
-                              title={`${b.count} trade${b.count === 1 ? "" : "s"} · avg ${fmtMoney(b.avgNetPnl)}`}
-                              style={{ width: `${barWidth}%`, height: "100%", background: barColor, borderRadius: 4 }}
-                            />
+                            <div style={{ width: `${barWidth}%`, height: "100%", background: barColor, borderRadius: 4 }} />
+                          )}
+                          {hoveredDurationBucket === b.label && b.count > 0 && (
+                            <div style={{
+                              position: "absolute", left: `min(${barWidth}%, calc(100% - 150px))`, bottom: "calc(100% + 8px)", zIndex: 5,
+                              background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "8px 10px",
+                              boxShadow: "0 4px 14px rgba(20,20,35,0.18)", whiteSpace: "nowrap", pointerEvents: "none",
+                            }}>
+                              <div className="mono" style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted }}>
+                                {b.count} trade{b.count === 1 ? "" : "s"}
+                              </div>
+                              <div className="mono" style={{ fontSize: 12.5, fontWeight: 700, color: barColor }}>
+                                Avg net {fmtMoney(b.avgNetPnl)}
+                              </div>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -3915,6 +4095,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                     <option value="number">Number</option>
                     <option value="pnl">P&L</option>
                     <option value="winRate">Win rate</option>
+                    <option value="expectancy">Expectancy</option>
                     <option value="frequency">Frequency</option>
                   </select>
                 </div>
@@ -3970,9 +4151,13 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                     <div className="mono" style={{ display: "flex", gap: 20, fontSize: 12.5, color: COLORS.textMuted, flexWrap: "wrap" }}>
                       <span>{p.count} trade{p.count === 1 ? "" : "s"}</span>
                       <span>Win rate <span style={{ fontWeight: 700, color: COLORS.text }}>{p.winRateP}%</span></span>
+                      <span>Expectancy <span style={{ fontWeight: 700, color: p.expectancy >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(p.expectancy)}</span></span>
                       <span>Total P&L <span style={{ fontWeight: 700, color: p.total >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(p.total)}</span></span>
                       <span>Biggest win <span style={{ fontWeight: 700, color: COLORS.win }}>{fmtMoney(p.biggestWin)}</span></span>
                       <span>Biggest loss <span style={{ fontWeight: 700, color: COLORS.loss }}>{fmtMoney(p.biggestLoss)}</span></span>
+                      {p.adherenceRate !== null && (
+                        <span>Rule adherence <span style={{ fontWeight: 700, color: COLORS.text }}>{p.adherenceRate}%</span></span>
+                      )}
                     </div>
                     {expandedPatternId === p.id && (
                       <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${COLORS.border}`, display: "grid", gap: 6 }}>
@@ -4119,7 +4304,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
             </form>
 
             {friendsLoading ? (
-              <EmptyState text="Loading…" />
+              <EmptyState text="Loading…" loading />
             ) : (
               <>
                 {friendships.filter((f) => f.status === "pending" && !f.iAmRequester).length > 0 && (
@@ -4219,7 +4404,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
             </form>
 
             {groupsLoading ? (
-              <EmptyState text="Loading…" />
+              <EmptyState text="Loading…" loading />
             ) : groupsList.length === 0 ? (
               <EmptyState text="No groups yet. Create one above with some of your friends." />
             ) : (
@@ -4403,7 +4588,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
             )}
 
             {leaderboardLoading ? (
-              <EmptyState text="Loading leaderboard…" />
+              <EmptyState text="Loading leaderboard…" loading />
             ) : leaderboardList.length === 0 ? (
               <EmptyState text="No one has opted in yet — be the first." />
             ) : (
@@ -4752,6 +4937,25 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                     {GRADES.slice().reverse().map((g) => <option key={g} value={g}>{g}</option>)}
                   </select>
                 </Field>
+                <Field label="Followed rules?" style={{ flex: "1 1 150px" }}>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {[["Yes", true], ["No", false], ["—", null]].map(([lbl, val]) => (
+                      <button
+                        key={lbl}
+                        type="button"
+                        onClick={() => setEditForm({ ...editForm, rulesFollowed: val })}
+                        style={{
+                          flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 12.5, fontWeight: 700, cursor: "pointer",
+                          border: `1px solid ${editForm.rulesFollowed === val ? COLORS.accent : COLORS.border}`,
+                          background: editForm.rulesFollowed === val ? COLORS.accentSoft : "transparent",
+                          color: editForm.rulesFollowed === val ? COLORS.accent : COLORS.textMuted,
+                        }}
+                      >
+                        {lbl}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
               </div>
 
               <div>
@@ -5051,6 +5255,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
             onClose={() => setMediaModalTradeId(null)}
             onAddFiles={addMediaFiles}
             onDeleteMedia={deleteMediaItem}
+            onSaveAnnotations={updateMediaAnnotations}
           />
         );
       })()}
