@@ -64,6 +64,7 @@ After adding/changing env vars, redeploy (`vercel --prod`, or Deployments → Re
 2. Endpoint URL: `https://<your-site>/api/stripe-webhook`.
 3. Events to send: `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`.
 4. After creating it, copy the **Signing secret** (`whsec_...`) and set it as `STRIPE_WEBHOOK_SECRET` in Vercel (step 5), then redeploy.
+5. **Activate the Customer Portal**: Stripe Dashboard → **Settings → Billing → Customer portal** → turn it on (in both test and live mode). This is what powers the in-app "Manage subscription" button (`api/create-portal-session.js`) — without activating it, that button will fail with a Stripe configuration error. While you're there, Stripe's portal settings let you customize what's allowed (e.g. whether customers can also switch plans, not just cancel).
 
 ## 7. Importing your existing data
 

@@ -188,6 +188,36 @@ const MOODS = [
   { key: "flat", label: "Flat / numb", color: "#8B8FA3" },
 ];
 
+// Trading losses can surface real distress in a journal meant for honest
+// reflection. This is plain keyword matching (not an AI classifier, not a
+// diagnosis) that never blocks or alters what gets saved — it only decides
+// whether to also show supportive crisis resources alongside the entry.
+const CRISIS_KEYWORDS = [
+  "kill myself", "kill me", "end my life", "ending my life", "want to die", "wanting to die",
+  "don't want to be here", "dont want to be here", "not worth living", "no reason to live",
+  "better off dead", "suicide", "suicidal", "self harm", "self-harm", "selfharm",
+  "hurt myself", "hurting myself", "cut myself", "cutting myself",
+  "can't go on", "cant go on", "can't take it anymore", "cant take it anymore",
+];
+function containsCrisisLanguage(...texts) {
+  const combined = texts.filter(Boolean).join(" ").toLowerCase();
+  if (!combined) return false;
+  return CRISIS_KEYWORDS.some((kw) => combined.includes(kw));
+}
+function CrisisSupportBanner() {
+  return (
+    <div style={{ background: COLORS.accentSoft, border: `1px solid ${COLORS.accent}40`, borderRadius: 12, padding: "14px 16px", fontSize: 13, lineHeight: 1.55 }}>
+      <div style={{ fontWeight: 700, color: COLORS.text, marginBottom: 4 }}>You don't have to go through this alone.</div>
+      <div style={{ color: COLORS.textMuted }}>
+        If you're thinking about suicide or hurting yourself, please reach out right now: in the US, call or text <strong style={{ color: COLORS.text }}>988</strong> (Suicide &amp; Crisis Lifeline). In the UK or Ireland, call <strong style={{ color: COLORS.text }}>116 123</strong> (Samaritans). Anywhere else, <a href="https://findahelpline.com" target="_blank" rel="noopener" style={{ color: COLORS.accent, fontWeight: 600 }}>findahelpline.com</a> can connect you to local support, or contact your local emergency number.
+      </div>
+      <div style={{ color: COLORS.textMuted, marginTop: 6, fontSize: 11.5 }}>
+        Shown automatically based on words in this entry — nothing is sent anywhere, and your entry saves normally either way.
+      </div>
+    </div>
+  );
+}
+
 const TIMEFRAMES = [
   { value: "15s", label: "15 Second" },
   { value: "30s", label: "30 Second" },
@@ -1531,7 +1561,7 @@ function Paywall({ status, onLogout, onSubscribe, checkoutBusy, checkoutError })
   );
 }
 
-function TradeJournal({ session, onLogout, initialDisplayName }) {
+function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatus, currentPeriodEnd, trialEndMs, onManageBilling, portalBusy, portalError }) {
   const userId = session.user.id;
   // The one account that receives (and reads) everyone's feedback, instead
   // of submitting its own. See ADMIN_FEEDBACK_EMAIL near the top of the file.
@@ -4755,6 +4785,30 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               </div>
             </div>
 
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Subscription</div>
+            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 18, boxShadow: "0 1px 2px rgba(23,21,51,0.04)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 28 }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>
+                  {subscriptionStatus === "active" ? "Active" : subscriptionStatus === "trialing" ? "Free trial" : subscriptionStatus === "past_due" ? "Payment past due" : "Canceled"}
+                </div>
+                <div style={{ fontSize: 12.5, color: COLORS.textMuted, maxWidth: 420 }}>
+                  {subscriptionStatus === "active" && currentPeriodEnd
+                    ? `Renews automatically on ${new Date(currentPeriodEnd).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })} — you'll be billed again then unless you cancel before that date.`
+                    : subscriptionStatus === "trialing"
+                    ? `Your free trial ends ${new Date(trialEndMs).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}, after which it becomes a paid subscription.`
+                    : subscriptionStatus === "past_due"
+                    ? "We couldn't process your last payment — update your card in the billing portal to keep access."
+                    : "No active subscription."}
+                </div>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+                <button onClick={onManageBilling} disabled={portalBusy} style={{ ...ghostBtnStyle_(), opacity: portalBusy ? 0.7 : 1 }}>
+                  {portalBusy ? "Opening…" : "Manage subscription"}
+                </button>
+                {portalError && <span style={{ fontSize: 11.5, color: COLORS.loss, maxWidth: 200, textAlign: "right" }}>{portalError}</span>}
+              </div>
+            </div>
+
             <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Pattern configuration</div>
 
             <div style={{ fontSize: 12.5, fontWeight: 600, color: COLORS.textMuted, marginBottom: 10 }}>Confluences</div>
@@ -4993,6 +5047,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               <Field label="Notes">
                 <textarea value={jNotes} onChange={(e) => setJNotes(e.target.value)} placeholder="What happened, what you'd do differently…" style={{ ...inputStyle_(), minHeight: 80, resize: "vertical" }} />
               </Field>
+              {containsCrisisLanguage(jFeelingDetail, jConditions, jNotes) && <CrisisSupportBanner />}
               {journalFormError && (
                 <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>
                   {journalFormError}
@@ -5383,6 +5438,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               <Field label="Notes">
                 <textarea value={editEntryForm.notes} onChange={(e) => setEditEntryForm({ ...editEntryForm, notes: e.target.value })} placeholder="What happened, what you'd do differently…" style={{ ...inputStyle_(), minHeight: 80, resize: "vertical" }} />
               </Field>
+              {containsCrisisLanguage(editEntryForm.feelingDetail, editEntryForm.conditions, editEntryForm.notes) && <CrisisSupportBanner />}
               {editEntryForm.error && (
                 <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "8px 12px", borderRadius: 8, fontSize: 13 }}>
                   {editEntryForm.error}
@@ -6049,6 +6105,8 @@ function App() {
   const [profileLoading, setProfileLoading] = useState(true);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
   const [checkoutError, setCheckoutError] = useState(null);
+  const [portalBusy, setPortalBusy] = useState(false);
+  const [portalError, setPortalError] = useState(null);
   const [activating, setActivating] = useState(() => new URLSearchParams(window.location.search).get("checkout") === "success");
 
   useEffect(() => {
@@ -6130,6 +6188,25 @@ function App() {
     }
   }
 
+  async function handleManageBilling() {
+    setPortalBusy(true);
+    setPortalError(null);
+    try {
+      const { data: sessionData } = await supabaseClient.auth.getSession();
+      const token = sessionData.session && sessionData.session.access_token;
+      const res = await fetch("/api/create-portal-session", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json();
+      if (!res.ok || !body.url) throw new Error(body.error || "Could not open billing portal.");
+      window.location.href = body.url;
+    } catch (err) {
+      setPortalError(err.message || "Could not open billing portal.");
+      setPortalBusy(false);
+    }
+  }
+
   const loadingScreen = (text) => (
     <div style={{ display: "flex", minHeight: "100vh", alignItems: "center", justifyContent: "center", background: COLORS.bg, color: COLORS.textMuted, fontFamily: "'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif" }}>
       {text}
@@ -6164,7 +6241,19 @@ function App() {
     );
   }
 
-  return <TradeJournal session={session} onLogout={handleLogout} initialDisplayName={profile ? profile.display_name : ""} />;
+  return (
+    <TradeJournal
+      session={session}
+      onLogout={handleLogout}
+      initialDisplayName={profile ? profile.display_name : ""}
+      subscriptionStatus={status}
+      currentPeriodEnd={profile ? profile.current_period_end : null}
+      trialEndMs={trialEndMs}
+      onManageBilling={handleManageBilling}
+      portalBusy={portalBusy}
+      portalError={portalError}
+    />
+  );
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
