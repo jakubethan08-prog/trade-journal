@@ -325,6 +325,7 @@ function rowToTrade(row) {
     grade: row.grade || null,
     entryType: row.entry_type,
     rulesFollowed: row.rules_followed === null || row.rules_followed === undefined ? null : row.rules_followed,
+    breakEven: !!row.break_even,
     media: [],
   };
 }
@@ -341,6 +342,7 @@ function tradeToRow(t, userId) {
     grade: t.grade || null,
     entry_type: t.entryType || "trade",
     rules_followed: t.rulesFollowed === undefined ? null : t.rulesFollowed,
+    break_even: t.entryType === "payout" ? false : !!t.breakEven,
   };
 }
 function rowToEntry(row) {
@@ -1591,6 +1593,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
   const [tRR, setTRR] = useState("");
   const [tGrade, setTGrade] = useState("");
   const [tRulesFollowed, setTRulesFollowed] = useState(null); // null = not set, true/false = answered
+  const [tBreakEven, setTBreakEven] = useState(false);
 
   const [sortKey, setSortKey] = useState("date");
   const [tradesSubTab, setTradesSubTab] = useState("all");
@@ -2610,6 +2613,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
       symbol: tSymbol.trim(),
       side: tSide, risk: tRisk === "" ? null : Number(tRisk), rr: tRR === "" ? null : Number(tRR), grade: tGrade || null, entryType: tEntryType,
       rulesFollowed: tEntryType === "trade" ? tRulesFollowed : null,
+      breakEven: tEntryType === "trade" ? tBreakEven : false,
     };
     const { data, error } = await supabaseClient.from("trades").insert(tradeToRow(draft, userId)).select().single();
     if (error) { setTradeFormError("Couldn't save the trade — try again."); return; }
@@ -2640,8 +2644,10 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
     }
 
     setSaveError(null);
-    setTPnl(""); setTDurH(""); setTDurM(""); setTDurS(""); setTSymbol("");
-    setTRisk(""); setTRR(""); setTSide("long"); setTGrade(""); setTEntryType("trade"); setTRulesFollowed(null);
+    // Symbol deliberately isn't cleared — you usually log several trades on
+    // the same instrument in a row, so it stays put until you type over it.
+    setTPnl(""); setTDurH(""); setTDurM(""); setTDurS("");
+    setTRisk(""); setTRR(""); setTSide("long"); setTGrade(""); setTEntryType("trade"); setTRulesFollowed(null); setTBreakEven(false);
     setTConfluenceEntries([]); setPickConfluenceId(""); setPickTimeframe(""); setPickPoints(""); setTTargetTags([]);
   }
 
@@ -2735,6 +2741,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
       rr: t.rr === null || t.rr === undefined ? "" : String(t.rr),
       grade: t.grade || "",
       rulesFollowed: t.rulesFollowed === undefined ? null : t.rulesFollowed,
+      breakEven: !!t.breakEven,
       error: null,
     });
   }
@@ -2756,6 +2763,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
       rr: editForm.rr === "" ? null : Number(editForm.rr),
       grade: editForm.grade || null,
       rules_followed: current.entryType === "payout" ? null : editForm.rulesFollowed,
+      break_even: current.entryType === "payout" ? false : !!editForm.breakEven,
     };
     const { error } = await supabaseClient.from("trades").update(patch).eq("id", editingTradeId);
     if (error) { setEditForm({ ...editForm, error: "Couldn't save changes — try again." }); return; }
@@ -2770,6 +2778,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
       rr: patch.rr,
       grade: patch.grade,
       rulesFollowed: patch.rules_followed,
+      breakEven: patch.break_even,
     } : t));
     setTrades(next);
     setEditingTradeId(null);
@@ -2904,9 +2913,13 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
   const tradingOnly = trades.filter((t) => t.entryType !== "payout");
   const totalPnl = tradingOnly.reduce((s, t) => s + t.pnl, 0);
   const totalPayouts = Math.abs(trades.filter((t) => t.entryType === "payout").reduce((s, t) => s + t.pnl, 0));
-  const wins = tradingOnly.filter((t) => t.pnl > 0).length;
-  const losses = tradingOnly.filter((t) => t.pnl < 0).length;
-  const winRate = tradingOnly.length ? Math.round((wins / tradingOnly.length) * 100) : 0;
+  // Break-even trades are real money (still counted in P&L above) but are
+  // excluded from win rate / expectancy everywhere -- they didn't clearly
+  // win or lose, so counting them either way would understate the win rate.
+  const winRateEligible = tradingOnly.filter((t) => !t.breakEven);
+  const wins = winRateEligible.filter((t) => t.pnl > 0).length;
+  const losses = winRateEligible.filter((t) => t.pnl < 0).length;
+  const winRate = winRateEligible.length ? Math.round((wins / winRateEligible.length) * 100) : 0;
   const avgDuration = tradingOnly.length ? Math.round(tradingOnly.reduce((s, t) => s + t.duration, 0) / tradingOnly.length) : 0;
   const grossWin = tradingOnly.filter(t => t.pnl > 0).reduce((s,t)=>s+t.pnl,0);
   const grossLoss = Math.abs(tradingOnly.filter(t => t.pnl < 0).reduce((s,t)=>s+t.pnl,0));
@@ -3011,11 +3024,17 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
         sameIds(tradeConfluenceMap[t.id] || [], confIds) && sameIds(tradeTargetTagMap[t.id] || [], tagIds)
       );
       const count = taggedTrades.length;
-      const total = taggedTrades.reduce((s, t) => s + t.pnl, 0);
-      const winningTrades = taggedTrades.filter((t) => t.pnl > 0);
-      const losingTrades = taggedTrades.filter((t) => t.pnl < 0);
+      // Break-even trades still count toward frequency (count) above, but
+      // are excluded from every performance number below -- they didn't
+      // clearly win or lose, so they shouldn't dilute win rate, expectancy,
+      // or this pattern's P&L.
+      const scoredTrades = taggedTrades.filter((t) => !t.breakEven);
+      const scoredCount = scoredTrades.length;
+      const total = scoredTrades.reduce((s, t) => s + t.pnl, 0);
+      const winningTrades = scoredTrades.filter((t) => t.pnl > 0);
+      const losingTrades = scoredTrades.filter((t) => t.pnl < 0);
       const wins = winningTrades.length;
-      const winRateP = count ? Math.round((wins / count) * 100) : 0;
+      const winRateP = scoredCount ? Math.round((wins / scoredCount) * 100) : 0;
       // Biggest win/loss only ever come from an actual winning/losing trade —
       // if there are none of one kind (e.g. every trade in this pattern won),
       // that figure is 0, not the closest-to-zero trade of the other kind.
@@ -3027,8 +3046,8 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
       // can win often but still lose money if losses run bigger than wins.
       const avgWin = winningTrades.length ? winningTrades.reduce((s, t) => s + t.pnl, 0) / winningTrades.length : 0;
       const avgLoss = losingTrades.length ? Math.abs(losingTrades.reduce((s, t) => s + t.pnl, 0) / losingTrades.length) : 0;
-      const winRateDec = count ? wins / count : 0;
-      const lossRateDec = count ? losingTrades.length / count : 0;
+      const winRateDec = scoredCount ? wins / scoredCount : 0;
+      const lossRateDec = scoredCount ? losingTrades.length / scoredCount : 0;
       const expectancy = winRateDec * avgWin - lossRateDec * avgLoss;
       const ruledTrades = taggedTrades.filter((t) => t.rulesFollowed === true || t.rulesFollowed === false);
       const adherenceRate = ruledTrades.length ? Math.round((ruledTrades.filter((t) => t.rulesFollowed === true).length / ruledTrades.length) * 100) : null;
@@ -3070,8 +3089,9 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
     const weekTrades = tradingOnly.filter((t) => t.date >= startStr && t.date <= endStr);
     const count = weekTrades.length;
     const total = weekTrades.reduce((s, t) => s + t.pnl, 0);
-    const wins = weekTrades.filter((t) => t.pnl > 0).length;
-    const winRateWk = count ? Math.round((wins / count) * 100) : 0;
+    const weekScored = weekTrades.filter((t) => !t.breakEven);
+    const wins = weekScored.filter((t) => t.pnl > 0).length;
+    const winRateWk = weekScored.length ? Math.round((wins / weekScored.length) * 100) : 0;
     const best = weekTrades.length ? weekTrades.reduce((a, t) => (t.pnl > a.pnl ? t : a)) : null;
     const worst = weekTrades.length ? weekTrades.reduce((a, t) => (t.pnl < a.pnl ? t : a)) : null;
     const ruled = weekTrades.filter((t) => t.rulesFollowed === true || t.rulesFollowed === false);
@@ -3083,13 +3103,18 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
 
   // ---- Calendar: group trades by date, build week rows with a trailing Total column ----
   const dayMap = trades.reduce((acc, t) => {
-    if (!acc[t.date]) acc[t.date] = { total: 0, count: 0, wins: 0, payoutTotal: 0 };
+    if (!acc[t.date]) acc[t.date] = { total: 0, count: 0, wins: 0, scoredCount: 0, payoutTotal: 0, hasBreakEven: false };
     if (t.entryType === "payout") {
       acc[t.date].payoutTotal += t.pnl;
     } else {
       acc[t.date].total += t.pnl;
       acc[t.date].count += 1;
-      if (t.pnl > 0) acc[t.date].wins += 1;
+      if (t.breakEven) {
+        acc[t.date].hasBreakEven = true;
+      } else {
+        acc[t.date].scoredCount += 1;
+        if (t.pnl > 0) acc[t.date].wins += 1;
+      }
     }
     return acc;
   }, {});
@@ -3201,9 +3226,6 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
   }
   const currentBalance = equityCurve.length ? equityCurve[equityCurve.length - 1].balance : 0;
   const peakBalance = Math.max(0, ...equityCurve.map((p) => p.balance));
-  const troughBalance = Math.min(0, ...equityCurve.map((p) => p.balance));
-  const drawdownRecovered = currentBalance > Math.abs(troughBalance);
-  const displayDrawdown = drawdownRecovered ? 0 : troughBalance;
 
   // ---- Trading Insights (Performance tab) ----
   const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -3267,12 +3289,13 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
   ];
   const durationBucketStats = DURATION_BUCKETS.map((b) => {
     const inBucket = tradingOnly.filter((t) => t.duration >= b.min && t.duration < b.max);
-    const wins = inBucket.filter((t) => t.pnl > 0).length;
+    const bucketScored = inBucket.filter((t) => !t.breakEven);
+    const wins = bucketScored.filter((t) => t.pnl > 0).length;
     return {
       label: b.label,
       count: inBucket.length,
       pctOfTrades: tradingOnly.length ? (inBucket.length / tradingOnly.length) * 100 : 0,
-      winRate: inBucket.length ? (wins / inBucket.length) * 100 : 0,
+      winRate: bucketScored.length ? (wins / bucketScored.length) * 100 : 0,
       avgNetPnl: inBucket.length ? inBucket.reduce((s, t) => s + t.pnl, 0) / inBucket.length : 0,
     };
   });
@@ -3739,17 +3762,17 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                 ))}
               </div>
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                <Field label="Date" style={{ flex: "1 1 140px" }}>
+                <Field label="Date" style={{ flex: "1 1 200px" }}>
                   <input type="date" value={tDate} onChange={(e) => setTDate(e.target.value)} style={inputStyle_()} />
                 </Field>
                 {tEntryType === "trade" && (
-                  <Field label="Symbol (optional)" style={{ flex: "1 1 120px" }}>
+                  <Field label="Symbol (optional)" style={{ flex: "1 1 200px" }}>
                     <input type="text" value={tSymbol} onChange={(e) => setTSymbol(e.target.value)} placeholder="ES, AAPL…" style={inputStyle_()} />
                   </Field>
                 )}
               </div>
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                <Field label={tEntryType === "payout" ? "Value ($)" : "P&L ($)"} style={{ flex: "1 1 140px" }}>
+                <Field label={tEntryType === "payout" ? "Value ($)" : "P&L ($)"} style={{ flex: "1 1 200px" }}>
                   <input
                     type="number" step="0.01" min={tEntryType === "payout" ? "0" : undefined} value={tPnl} onChange={(e) => setTPnl(e.target.value)}
                     placeholder="Enter amount…" className="mono"
@@ -3757,30 +3780,30 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                   />
                 </Field>
                 {tEntryType === "trade" && (
-                  <Field label="Duration" style={{ flex: "1 1 220px" }}>
+                  <Field label="Duration" style={{ flex: "1 1 200px" }}>
                     <div style={{ display: "flex", gap: 6 }}>
-                      <input type="number" min="0" value={tDurH} onChange={(e) => setTDurH(e.target.value)} placeholder="0h" style={inputStyle_()} className="mono" />
-                      <input type="number" min="0" value={tDurM} onChange={(e) => setTDurM(e.target.value)} placeholder="0m" style={inputStyle_()} className="mono" />
-                      <input type="number" min="0" value={tDurS} onChange={(e) => setTDurS(e.target.value)} placeholder="0s" style={inputStyle_()} className="mono" />
+                      <input type="number" min="0" value={tDurH} onChange={(e) => setTDurH(e.target.value)} placeholder="0h" style={{ ...inputStyle_(), flex: 1, minWidth: 0 }} className="mono" />
+                      <input type="number" min="0" value={tDurM} onChange={(e) => setTDurM(e.target.value)} placeholder="0m" style={{ ...inputStyle_(), flex: 1, minWidth: 0 }} className="mono" />
+                      <input type="number" min="0" value={tDurS} onChange={(e) => setTDurS(e.target.value)} placeholder="0s" style={{ ...inputStyle_(), flex: 1, minWidth: 0 }} className="mono" />
                     </div>
                   </Field>
                 )}
               </div>
               {tEntryType === "trade" && (
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                  <Field label="Side" style={{ flex: "1 1 110px" }}>
+                  <Field label="Side" style={{ flex: "1 1 130px" }}>
                     <select value={tSide} onChange={(e) => setTSide(e.target.value)} style={inputStyle_()}>
                       <option value="long">Long</option>
                       <option value="short">Short</option>
                     </select>
                   </Field>
-                  <Field label="Risk (%)" style={{ flex: "1 1 90px" }}>
+                  <Field label="Risk (%)" style={{ flex: "1 1 130px" }}>
                     <input type="number" step="0.001" min="0" value={tRisk} onChange={(e) => setTRisk(e.target.value)} placeholder="—" style={inputStyle_()} className="mono" />
                   </Field>
-                  <Field label="R:R" style={{ flex: "1 1 90px" }}>
+                  <Field label="R:R" style={{ flex: "1 1 130px" }}>
                     <input type="number" step="0.01" min="0" value={tRR} onChange={(e) => setTRR(e.target.value)} placeholder="e.g. 2.50" style={inputStyle_()} className="mono" />
                   </Field>
-                  <Field label="Grade" style={{ flex: "1 1 90px" }}>
+                  <Field label="Grade" style={{ flex: "1 1 130px" }}>
                     <select value={tGrade} onChange={(e) => setTGrade(e.target.value)} style={inputStyle_()}>
                       <option value="">—</option>
                       {GRADES.slice().reverse().map((g) => (
@@ -3788,7 +3811,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                       ))}
                     </select>
                   </Field>
-                  <Field label="Followed rules?" style={{ flex: "1 1 150px" }}>
+                  <Field label="Followed rules?" style={{ flex: "1 1 130px" }}>
                     <div style={{ display: "flex", gap: 6 }}>
                       {[["Yes", true], ["No", false], ["—", null]].map(([lbl, val]) => (
                         <button
@@ -3796,7 +3819,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                           type="button"
                           onClick={() => setTRulesFollowed(val)}
                           style={{
-                            flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 12.5, fontWeight: 700, cursor: "pointer",
+                            flex: 1, padding: "9px 0", borderRadius: 8, fontSize: 12.5, fontWeight: 700, cursor: "pointer",
                             border: `1px solid ${tRulesFollowed === val ? COLORS.accent : COLORS.border}`,
                             background: tRulesFollowed === val ? COLORS.accentSoft : "transparent",
                             color: tRulesFollowed === val ? COLORS.accent : COLORS.textMuted,
@@ -3806,6 +3829,20 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                         </button>
                       ))}
                     </div>
+                  </Field>
+                  <Field label="Break even?" style={{ flex: "1 1 130px" }}>
+                    <button
+                      type="button"
+                      onClick={() => setTBreakEven(!tBreakEven)}
+                      style={{
+                        width: "100%", padding: "9px 0", borderRadius: 8, fontSize: 12.5, fontWeight: 700, cursor: "pointer",
+                        border: `1px solid ${tBreakEven ? COLORS.accent : COLORS.border}`,
+                        background: tBreakEven ? COLORS.accentSoft : "transparent",
+                        color: tBreakEven ? COLORS.accent : COLORS.textMuted,
+                      }}
+                    >
+                      {tBreakEven ? "Yes" : "No"}
+                    </button>
                   </Field>
                 </div>
               )}
@@ -4097,10 +4134,6 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                       <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: COLORS.win }}>{fmtMoney(peakBalance)}</div>
                     </div>
                     <div>
-                      <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>DRAWDOWN</div>
-                      <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: drawdownRecovered ? COLORS.textMuted : COLORS.loss }}>{fmtMoney(displayDrawdown)}</div>
-                    </div>
-                    <div>
                       <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>TRADES</div>
                       <div className="mono" style={{ fontSize: 15, fontWeight: 700 }}>{chronoTrades.length}</div>
                     </div>
@@ -4232,6 +4265,17 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                               DLL
                             </div>
                           )}
+                          {d && d.hasBreakEven && (
+                            <div
+                              title="Includes a break-even trade"
+                              style={{
+                                position: "absolute", bottom: 5, right: 5, fontSize: 8.5, fontWeight: 800, letterSpacing: "0.03em",
+                                color: "#fff", background: COLORS.textMuted, borderRadius: 4, padding: "1px 4px",
+                              }}
+                            >
+                              BE
+                            </div>
+                          )}
                           <div style={{ fontSize: 13, color: hasTrades ? cellColor : COLORS.textMuted, fontWeight: 600 }}>
                             {cell.day}
                           </div>
@@ -4240,9 +4284,11 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                               <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: cellColor }}>
                                 {fmtMoney(d.total)}
                               </div>
-                              <div style={{ fontSize: 12.5, color: cellColor, opacity: 0.85 }}>
-                                {Math.round((d.wins / d.count) * 100)}%
-                              </div>
+                              {d.scoredCount > 0 && (
+                                <div style={{ fontSize: 12.5, color: cellColor, opacity: 0.85 }}>
+                                  {Math.round((d.wins / d.scoredCount) * 100)}%
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -4809,6 +4855,26 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
               </div>
             </div>
 
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Leaderboard</div>
+            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 18, boxShadow: "0 1px 2px rgba(23,21,51,0.04)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 28 }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Appear on the global leaderboard</div>
+                <div style={{ fontSize: 12, color: COLORS.textMuted, maxWidth: 420 }}>
+                  Opt-in only — your total P&L, win rate, and trade count become visible to everyone. Your individual trades are never shown.
+                </div>
+              </div>
+              <button
+                onClick={toggleLeaderboardOptIn}
+                disabled={leaderboardOptInBusy}
+                style={{
+                  ...(leaderboardOptIn ? primaryBtnStyle_() : ghostBtnStyle_()),
+                  opacity: leaderboardOptInBusy ? 0.7 : 1,
+                }}
+              >
+                {leaderboardOptIn ? "Opted in ✓" : "Opt in"}
+              </button>
+            </div>
+
             <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Pattern configuration</div>
 
             <div style={{ fontSize: 12.5, fontWeight: 600, color: COLORS.textMuted, marginBottom: 10 }}>Confluences</div>
@@ -4866,24 +4932,41 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
           </>
         ) : tab === "leaderboard" ? (
           <>
-            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Appear on the global leaderboard</div>
-                <div style={{ fontSize: 12, color: COLORS.textMuted, maxWidth: 480 }}>
-                  Opt-in only — your total P&L, win rate, and trade count become visible to everyone. Your individual trades are never shown.
-                </div>
+            {!leaderboardLoading && leaderboardList.length > 0 && (
+              <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 14, marginBottom: 32, paddingTop: 8 }}>
+                {[leaderboardList[1], leaderboardList[0], leaderboardList[2]].map((row, idx) => {
+                  if (!row) return <div key={`empty-${idx}`} style={{ flex: "1 1 0", maxWidth: 180 }} />;
+                  const rank = row === leaderboardList[0] ? 1 : row === leaderboardList[1] ? 2 : 3;
+                  const height = { 1: 168, 2: 128, 3: 100 }[rank];
+                  const medal = { 1: "🥇", 2: "🥈", 3: "🥉" }[rank];
+                  const podiumColor = { 1: "#F0B429", 2: "#ABB4C4", 3: "#C8874A" }[rank];
+                  const isMe = row.user_id === userId;
+                  return (
+                    <div key={row.user_id} style={{ flex: "1 1 0", maxWidth: 180, display: "flex", flexDirection: "column", alignItems: "center" }}>
+                      <div style={{ fontSize: 30, marginBottom: 4 }}>{medal}</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 2, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>
+                        {row.display_name}{isMe ? " (you)" : ""}
+                      </div>
+                      <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: row.total_pnl >= 0 ? COLORS.win : COLORS.loss, marginBottom: 1 }}>
+                        {fmtMoney(row.total_pnl)}
+                      </div>
+                      <div style={{ fontSize: 11, color: COLORS.textMuted, marginBottom: 10 }}>{row.win_rate}% win rate</div>
+                      <div
+                        style={{
+                          width: "100%", height, borderRadius: "14px 14px 0 0",
+                          background: `linear-gradient(180deg, ${podiumColor}30, ${podiumColor}0A)`,
+                          border: `1.5px solid ${podiumColor}70`, borderBottom: "none",
+                          display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 14,
+                          boxShadow: `0 -4px 20px ${podiumColor}25`,
+                        }}
+                      >
+                        <span className="mono" style={{ fontSize: 30, fontWeight: 800, color: podiumColor }}>{rank}</span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-              <button
-                onClick={toggleLeaderboardOptIn}
-                disabled={leaderboardOptInBusy}
-                style={{
-                  ...(leaderboardOptIn ? primaryBtnStyle_() : ghostBtnStyle_()),
-                  opacity: leaderboardOptInBusy ? 0.7 : 1,
-                }}
-              >
-                {leaderboardOptIn ? "Opted in ✓" : "Opt in"}
-              </button>
-            </div>
+            )}
 
             <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
               {[
@@ -4910,9 +4993,9 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
               <EmptyState text="Loading leaderboard…" loading />
             ) : leaderboardList.length === 0 ? (
               <EmptyState text="No one has opted in yet — be the first." />
-            ) : (
+            ) : leaderboardList.length <= 3 ? null : (
               <div style={{ display: "grid", gap: 8 }}>
-                {leaderboardList.map((row, i) => {
+                {leaderboardList.slice(3).map((row, i) => {
                   const isMe = row.user_id === userId;
                   return (
                     <div
@@ -4926,7 +5009,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                       }}
                     >
                       <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                        <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: COLORS.textMuted, width: 28 }}>#{i + 1}</span>
+                        <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: COLORS.textMuted, width: 28 }}>#{i + 4}</span>
                         <span style={{ fontSize: 14, fontWeight: 700 }}>{row.display_name}{isMe ? " (you)" : ""}</span>
                       </div>
                       <div className="mono" style={{ display: "flex", gap: 20, fontSize: 12.5, color: COLORS.textMuted, flexWrap: "wrap" }}>
@@ -5251,45 +5334,45 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
             </div>
             <div style={{ display: "grid", gap: 12 }}>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <Field label="Date" style={{ flex: "1 1 140px" }}>
+                <Field label="Date" style={{ flex: "1 1 200px" }}>
                   <input type="date" value={editForm.date} onChange={(e) => setEditForm({ ...editForm, date: e.target.value })} style={inputStyle_()} />
                 </Field>
-                <Field label="Symbol" style={{ flex: "1 1 100px" }}>
+                <Field label="Symbol" style={{ flex: "1 1 200px" }}>
                   <input type="text" value={editForm.symbol} onChange={(e) => setEditForm({ ...editForm, symbol: e.target.value })} style={inputStyle_()} />
                 </Field>
               </div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <Field label="Side" style={{ flex: "1 1 90px" }}>
+                <Field label="Side" style={{ flex: "1 1 130px" }}>
                   <select value={editForm.side} onChange={(e) => setEditForm({ ...editForm, side: e.target.value })} style={inputStyle_()}>
                     <option value="long">Long</option>
                     <option value="short">Short</option>
                   </select>
                 </Field>
-                <Field label="P&L ($)" style={{ flex: "1 1 110px" }}>
+                <Field label="P&L ($)" style={{ flex: "1 1 130px" }}>
                   <input type="number" step="0.01" value={editForm.pnl} onChange={(e) => setEditForm({ ...editForm, pnl: e.target.value })} style={inputStyle_()} className="mono" />
                 </Field>
                 <Field label="Duration" style={{ flex: "1 1 200px" }}>
                   <div style={{ display: "flex", gap: 6 }}>
-                    <input type="number" min="0" value={editForm.durationH} onChange={(e) => setEditForm({ ...editForm, durationH: e.target.value })} placeholder="0h" style={inputStyle_()} className="mono" />
-                    <input type="number" min="0" value={editForm.durationM} onChange={(e) => setEditForm({ ...editForm, durationM: e.target.value })} placeholder="0m" style={inputStyle_()} className="mono" />
-                    <input type="number" min="0" value={editForm.durationS} onChange={(e) => setEditForm({ ...editForm, durationS: e.target.value })} placeholder="0s" style={inputStyle_()} className="mono" />
+                    <input type="number" min="0" value={editForm.durationH} onChange={(e) => setEditForm({ ...editForm, durationH: e.target.value })} placeholder="0h" style={{ ...inputStyle_(), flex: 1, minWidth: 0 }} className="mono" />
+                    <input type="number" min="0" value={editForm.durationM} onChange={(e) => setEditForm({ ...editForm, durationM: e.target.value })} placeholder="0m" style={{ ...inputStyle_(), flex: 1, minWidth: 0 }} className="mono" />
+                    <input type="number" min="0" value={editForm.durationS} onChange={(e) => setEditForm({ ...editForm, durationS: e.target.value })} placeholder="0s" style={{ ...inputStyle_(), flex: 1, minWidth: 0 }} className="mono" />
                   </div>
                 </Field>
               </div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <Field label="Risk (%)" style={{ flex: "1 1 90px" }}>
+                <Field label="Risk (%)" style={{ flex: "1 1 130px" }}>
                   <input type="number" step="0.001" min="0" value={editForm.risk} onChange={(e) => setEditForm({ ...editForm, risk: e.target.value })} style={inputStyle_()} className="mono" />
                 </Field>
-                <Field label="R:R" style={{ flex: "1 1 90px" }}>
+                <Field label="R:R" style={{ flex: "1 1 130px" }}>
                   <input type="number" step="0.01" min="0" value={editForm.rr} onChange={(e) => setEditForm({ ...editForm, rr: e.target.value })} style={inputStyle_()} className="mono" />
                 </Field>
-                <Field label="Grade" style={{ flex: "1 1 90px" }}>
+                <Field label="Grade" style={{ flex: "1 1 130px" }}>
                   <select value={editForm.grade} onChange={(e) => setEditForm({ ...editForm, grade: e.target.value })} style={inputStyle_()}>
                     <option value="">—</option>
                     {GRADES.slice().reverse().map((g) => <option key={g} value={g}>{g}</option>)}
                   </select>
                 </Field>
-                <Field label="Followed rules?" style={{ flex: "1 1 150px" }}>
+                <Field label="Followed rules?" style={{ flex: "1 1 130px" }}>
                   <div style={{ display: "flex", gap: 6 }}>
                     {[["Yes", true], ["No", false], ["—", null]].map(([lbl, val]) => (
                       <button
@@ -5297,7 +5380,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                         type="button"
                         onClick={() => setEditForm({ ...editForm, rulesFollowed: val })}
                         style={{
-                          flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 12.5, fontWeight: 700, cursor: "pointer",
+                          flex: 1, padding: "9px 0", borderRadius: 8, fontSize: 12.5, fontWeight: 700, cursor: "pointer",
                           border: `1px solid ${editForm.rulesFollowed === val ? COLORS.accent : COLORS.border}`,
                           background: editForm.rulesFollowed === val ? COLORS.accentSoft : "transparent",
                           color: editForm.rulesFollowed === val ? COLORS.accent : COLORS.textMuted,
@@ -5307,6 +5390,20 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                       </button>
                     ))}
                   </div>
+                </Field>
+                <Field label="Break even?" style={{ flex: "1 1 130px" }}>
+                  <button
+                    type="button"
+                    onClick={() => setEditForm({ ...editForm, breakEven: !editForm.breakEven })}
+                    style={{
+                      width: "100%", padding: "9px 0", borderRadius: 8, fontSize: 12.5, fontWeight: 700, cursor: "pointer",
+                      border: `1px solid ${editForm.breakEven ? COLORS.accent : COLORS.border}`,
+                      background: editForm.breakEven ? COLORS.accentSoft : "transparent",
+                      color: editForm.breakEven ? COLORS.accent : COLORS.textMuted,
+                    }}
+                  >
+                    {editForm.breakEven ? "Yes" : "No"}
+                  </button>
                 </Field>
               </div>
 

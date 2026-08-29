@@ -79,6 +79,11 @@ create table if not exists public.trades (
 -- rate shown per pattern, separate from raw win/loss outcome.
 alter table public.trades add column if not exists rules_followed boolean;
 
+-- break_even: the trade is still counted in P&L/account size (it may have a
+-- small non-zero pnl), but is excluded from win rate, pattern expectancy,
+-- and pattern P&L everywhere, since it didn't clearly win or lose.
+alter table public.trades add column if not exists break_even boolean not null default false;
+
 create index if not exists trades_user_date_idx on public.trades (user_id, date);
 
 alter table public.trades enable row level security;
