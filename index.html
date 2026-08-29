@@ -4749,6 +4749,21 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
           </>
         ) : (
           <>
+            {entries.length > 0 && (
+              <div style={{ display: "flex", gap: 10, marginBottom: 14, alignItems: "center" }}>
+                <input
+                  type="text"
+                  value={journalSearch}
+                  onChange={(e) => setJournalSearch(e.target.value)}
+                  placeholder="Search journal entries…"
+                  style={{ ...inputStyle_(), flex: "1 1 220px", padding: "6px 12px" }}
+                />
+                {journalSearch && (
+                  <button type="button" onClick={() => setJournalSearch("")} style={ghostBtnStyle_()}>Clear</button>
+                )}
+              </div>
+            )}
+
             <form onSubmit={addEntry} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
               <div style={{ fontSize: 13, color: COLORS.text, fontWeight: 700 }}>Journal entry</div>
               <Field label="Date">
@@ -4798,21 +4813,6 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
               )}
               <button type="submit" style={primaryBtnStyle_()}>Save entry</button>
             </form>
-
-            {entries.length > 0 && (
-              <div style={{ display: "flex", gap: 10, marginBottom: 14, alignItems: "center" }}>
-                <input
-                  type="text"
-                  value={journalSearch}
-                  onChange={(e) => setJournalSearch(e.target.value)}
-                  placeholder="Search journal entries…"
-                  style={{ ...inputStyle_(), flex: "1 1 220px", padding: "6px 12px" }}
-                />
-                {journalSearch && (
-                  <button type="button" onClick={() => setJournalSearch("")} style={ghostBtnStyle_()}>Clear</button>
-                )}
-              </div>
-            )}
 
             {(() => {
               const jq = journalSearch.trim().toLowerCase();
