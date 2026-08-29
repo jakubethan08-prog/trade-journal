@@ -4,19 +4,22 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>A+ Trades</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22%237C5CFC%22/><text x=%2250%22 y=%2265%22 font-size=%2242%22 text-anchor=%22middle%22 fill=%22white%22 font-family=%22Arial,sans-serif%22 font-weight=%22bold%22>A+</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22%236C4FE0%22/><text x=%2250%22 y=%2265%22 font-size=%2242%22 text-anchor=%22middle%22 fill=%22white%22 font-family=%22Arial,sans-serif%22 font-weight=%22bold%22>A+</text></svg>">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<meta name="theme-color" content="#7C5CFC">
+<meta name="theme-color" content="#6C4FE0">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="A+ Trades">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-  html, body { margin: 0; padding: 0; background: #F3F4F9; }
+  html, body { margin: 0; padding: 0; background: #F3F4F9; font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif; }
   * { box-sizing: border-box; }
   input, textarea, select, button { font-family: inherit; }
   input:focus, textarea:focus, select:focus, button:focus-visible {
-    outline: 2px solid #7C5CFC;
+    outline: 2px solid #6C4FE0;
     outline-offset: 1px;
   }
   ::placeholder { color: #A6ABBD; }
@@ -98,44 +101,44 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_
 // to every user's feedback row in supabase/schema.sql (get_all_feedback()).
 const ADMIN_FEEDBACK_EMAIL = "jakubethan08@icloud.com";
 
-const PAYOUT_COLOR = "#0EA5E9";
+const PAYOUT_COLOR = "#0B93CC";
 
 const LIGHT_COLORS = {
-  bg: "#F3F4F9",
-  sidebar: "#171533",
-  sidebarActive: "#7C5CFC",
+  bg: "#F5F5FB",
+  sidebar: "#15132C",
+  sidebarActive: "#6C4FE0",
   card: "#FFFFFF",
-  border: "#E6E7F0",
-  text: "#1E2030",
-  textMuted: "#8B8FA3",
-  accent: "#7C5CFC",
-  accentSoft: "#EFEAFF",
-  win: "#16A34A",
-  winSoft: "#E8F8EE",
-  loss: "#E23D45",
-  lossSoft: "#FDECEC",
+  border: "#E4E5F0",
+  text: "#1A1C2C",
+  textMuted: "#82869B",
+  accent: "#6C4FE0",
+  accentSoft: "#EEE8FE",
+  win: "#12A454",
+  winSoft: "#E5F7ED",
+  loss: "#E0323B",
+  lossSoft: "#FCE8E9",
   payout: PAYOUT_COLOR,
-  payoutSoft: "#E3F4FC",
+  payoutSoft: "#E0F0FA",
   subtleBg: "#FAFAFD",
 };
 
 const DARK_COLORS = {
-  bg: "#12141C",
-  sidebar: "#0C0D14",
-  sidebarActive: "#8B7CFC",
-  card: "#1B1E29",
-  border: "#2C3040",
-  text: "#EDEEF3",
-  textMuted: "#8C90A3",
-  accent: "#9B8CFF",
-  accentSoft: "#2A2440",
-  win: "#34D399",
-  winSoft: "#173229",
-  loss: "#F87171",
-  lossSoft: "#3A1E20",
-  payout: "#38BDF8",
-  payoutSoft: "#173441",
-  subtleBg: "#242835",
+  bg: "#0F111A",
+  sidebar: "#0A0B13",
+  sidebarActive: "#7C63F5",
+  card: "#181B27",
+  border: "#292D3D",
+  text: "#EDEEF5",
+  textMuted: "#898DA3",
+  accent: "#9683FF",
+  accentSoft: "#2B2350",
+  win: "#2FD48A",
+  winSoft: "#143226",
+  loss: "#FF6B6B",
+  lossSoft: "#3B1E21",
+  payout: "#38B6F5",
+  payoutSoft: "#153847",
+  subtleBg: "#1F222E",
 };
 
 const THEME_KEY = "tj_theme_v1";
@@ -771,15 +774,16 @@ function EquityChart({ points, width = 900, height = 220, profitTarget = null, m
     >
       <defs>
         <linearGradient id="equityFill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={lineColor} stopOpacity="0.38" />
-          <stop offset="100%" stopColor={lineColor} stopOpacity="0.04" />
+          <stop offset="0%" stopColor={lineColor} stopOpacity="0.42" />
+          <stop offset="55%" stopColor={lineColor} stopOpacity="0.12" />
+          <stop offset="100%" stopColor={lineColor} stopOpacity="0.02" />
         </linearGradient>
       </defs>
 
       {/* $ scale with horizontal gridlines — on the right */}
       {yTicks.map((v, i) => (
         <g key={i}>
-          <line x1="0" y1={yAt(v)} x2={width - padRight} y2={yAt(v)} stroke={axisColor || COLORS.border} strokeWidth="1" />
+          <line x1="0" y1={yAt(v)} x2={width - padRight} y2={yAt(v)} stroke={axisColor || COLORS.border} strokeWidth="1" strokeDasharray="2 4" opacity="0.8" />
           <text x={width - padRight + 8} y={yAt(v) + 3.5} textAnchor="start" fontSize="10.5" fill={axisColor || COLORS.textMuted}>
             {fmtAxis(v)}
           </text>
@@ -810,8 +814,8 @@ function EquityChart({ points, width = 900, height = 220, profitTarget = null, m
       })()}
 
       <path d={areaPath} fill="url(#equityFill)" stroke="none" />
-      <path d={linePath} fill="none" stroke={lineColor} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
-      <circle cx={xAt(points.length - 1)} cy={yAt(last.balance)} r="4.5" fill={lineColor} />
+      <path d={linePath} fill="none" stroke={lineColor} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" filter={`drop-shadow(0 2px 5px ${lineColor}55)`} />
+      <circle cx={xAt(points.length - 1)} cy={yAt(last.balance)} r="5" fill={lineColor} stroke={COLORS.card} strokeWidth="2" />
 
       {/* Payout markers — a small dot on every point where a payout happened */}
       {points.map((p, i) => {
@@ -851,9 +855,9 @@ function EquityChart({ points, width = 900, height = 220, profitTarget = null, m
         const boxY = Math.min(Math.max(hy - boxH - 10, padTop), height - padBottom - boxH);
         return (
           <g pointerEvents="none">
-            <line x1={hx} y1={padTop} x2={hx} y2={height - padBottom + 10} stroke={COLORS.textMuted} strokeWidth="1" strokeDasharray="3 3" />
-            <circle cx={hx} cy={hy} r="4.5" fill={lineColor} stroke={COLORS.card} strokeWidth="1.5" />
-            <rect x={boxX} y={boxY} width={boxW} height={boxH} rx="8" fill={COLORS.card} stroke={COLORS.border} strokeWidth="1" />
+            <line x1={hx} y1={padTop} x2={hx} y2={height - padBottom + 10} stroke={COLORS.textMuted} strokeWidth="1" strokeDasharray="3 3" opacity="0.6" />
+            <circle cx={hx} cy={hy} r="5" fill={lineColor} stroke={COLORS.card} strokeWidth="2" />
+            <rect x={boxX} y={boxY} width={boxW} height={boxH} rx="11" fill={COLORS.card} stroke={COLORS.border} strokeWidth="1" filter="drop-shadow(0 4px 10px rgba(20,20,35,0.16))" />
             {hoverDateLabel && (
               <text x={boxX + 10} y={boxY + 15} fontSize="10.5" fontWeight="700" fill={COLORS.text}>
                 {hoverDateLabel}
@@ -956,14 +960,15 @@ function DrawdownChart({ points, width = 640, height = 220 }) {
     >
       <defs>
         <linearGradient id="drawdownFill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={COLORS.loss} stopOpacity="0.05" />
-          <stop offset="100%" stopColor={COLORS.loss} stopOpacity="0.38" />
+          <stop offset="0%" stopColor={COLORS.loss} stopOpacity="0.02" />
+          <stop offset="45%" stopColor={COLORS.loss} stopOpacity="0.14" />
+          <stop offset="100%" stopColor={COLORS.loss} stopOpacity="0.42" />
         </linearGradient>
       </defs>
 
       {yTicks.map((v, i) => (
         <g key={i}>
-          <line x1="0" y1={yAt(v)} x2={width - padRight} y2={yAt(v)} stroke={COLORS.border} strokeWidth="1" />
+          <line x1="0" y1={yAt(v)} x2={width - padRight} y2={yAt(v)} stroke={COLORS.border} strokeWidth="1" strokeDasharray="2 4" opacity="0.8" />
           <text x={width - padRight + 8} y={yAt(v) + 3.5} textAnchor="start" fontSize="10.5" fill={COLORS.textMuted}>
             {fmtAxis(v)}
           </text>
@@ -971,7 +976,7 @@ function DrawdownChart({ points, width = 640, height = 220 }) {
       ))}
 
       <path d={areaPath} fill="url(#drawdownFill)" stroke="none" />
-      <path d={linePath} fill="none" stroke={COLORS.loss} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+      <path d={linePath} fill="none" stroke={COLORS.loss} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" filter={`drop-shadow(0 2px 5px ${COLORS.loss}55)`} />
 
       <line x1="0" y1={height - padBottom + 10} x2={width - padRight} y2={height - padBottom + 10} stroke={COLORS.border} strokeWidth="1" />
       {tickIdxs.map((i) => {
@@ -997,9 +1002,9 @@ function DrawdownChart({ points, width = 640, height = 220 }) {
         const boxY = Math.min(Math.max(hy - boxH - 10, padTop), height - padBottom - boxH);
         return (
           <g pointerEvents="none">
-            <line x1={hx} y1={padTop} x2={hx} y2={height - padBottom + 10} stroke={COLORS.textMuted} strokeWidth="1" strokeDasharray="3 3" />
-            <circle cx={hx} cy={hy} r="4.5" fill={COLORS.loss} stroke={COLORS.card} strokeWidth="1.5" />
-            <rect x={boxX} y={boxY} width={boxW} height={boxH} rx="8" fill={COLORS.card} stroke={COLORS.border} strokeWidth="1" />
+            <line x1={hx} y1={padTop} x2={hx} y2={height - padBottom + 10} stroke={COLORS.textMuted} strokeWidth="1" strokeDasharray="3 3" opacity="0.6" />
+            <circle cx={hx} cy={hy} r="5" fill={COLORS.loss} stroke={COLORS.card} strokeWidth="2" />
+            <rect x={boxX} y={boxY} width={boxW} height={boxH} rx="11" fill={COLORS.card} stroke={COLORS.border} strokeWidth="1" filter="drop-shadow(0 4px 10px rgba(20,20,35,0.16))" />
             {hoverDateLabel && (
               <text x={boxX + 10} y={boxY + 15} fontSize="10.5" fontWeight="700" fill={COLORS.text}>
                 {hoverDateLabel}
@@ -1144,7 +1149,7 @@ function TargetsPanel({ targets, updateTargets, profitTargetHit, maxLossHit, dai
             <span style={{ fontSize: 12, color: COLORS.textMuted }}>Growth curve</span>
             <input
               type="color"
-              value={targets.growthColor || "#7C5CFC"}
+              value={targets.growthColor || "#6C4FE0"}
               onChange={(e) => updateTargets({ growthColor: e.target.value })}
               style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
             />
@@ -1443,7 +1448,7 @@ function AuthScreen() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", alignItems: "center", justifyContent: "center", gap: 28, background: COLORS.bg, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif" }}>
+    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", alignItems: "center", justifyContent: "center", gap: 28, background: COLORS.bg, fontFamily: "'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
         <div style={{
           width: 72, height: 72, borderRadius: 20,
@@ -1503,7 +1508,7 @@ function Paywall({ status, onLogout, onSubscribe, checkoutBusy, checkoutError })
     status === "canceled" ? "Your subscription has ended." :
     "Your free trial has ended.";
   return (
-    <div style={{ display: "flex", minHeight: "100vh", alignItems: "center", justifyContent: "center", background: COLORS.bg, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif" }}>
+    <div style={{ display: "flex", minHeight: "100vh", alignItems: "center", justifyContent: "center", background: COLORS.bg, fontFamily: "'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif" }}>
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 32, width: "100%", maxWidth: 420, display: "grid", gap: 16, textAlign: "center", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
         <div style={{ fontSize: 20, fontWeight: 700, color: COLORS.text }}>A+ Trades</div>
         <div style={{ fontSize: 14, color: COLORS.textMuted }}>{label} Subscribe to keep using A+ Trades.</div>
@@ -2541,7 +2546,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
 
   if (dataLoading) {
     return (
-      <div style={{ display: "flex", minHeight: "100vh", alignItems: "center", justifyContent: "center", background: COLORS.bg, color: COLORS.textMuted, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif" }}>
+      <div style={{ display: "flex", minHeight: "100vh", alignItems: "center", justifyContent: "center", background: COLORS.bg, color: COLORS.textMuted, fontFamily: "'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif" }}>
         Loading your data…
       </div>
     );
@@ -3256,7 +3261,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
   ];
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: COLORS.bg, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif", color: COLORS.text }}>
+    <div style={{ display: "flex", minHeight: "100vh", background: COLORS.bg, fontFamily: "'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif", color: COLORS.text }}>
 
       {/* Sidebar */}
       <div className="sidebar" style={{ width: 220, minWidth: 220, background: COLORS.sidebar, display: "flex", flexDirection: "column", padding: "22px 14px", position: "sticky", top: 0, height: "100vh", gap: 24 }}>
@@ -3625,7 +3630,7 @@ function TradeJournal({ session, onLogout, initialDisplayName }) {
                           <span>Win rate: <span style={{ fontWeight: 700 }}>{stats.winRate}%</span></span>
                           <span style={{ color: COLORS.textMuted }}>{stats.tradeCount} trade{stats.tradeCount === 1 ? "" : "s"}</span>
                           {friendAccounts && <span style={{ color: COLORS.textMuted }}>{friendAccounts}</span>}
-                          <button onClick={() => openFriendPerformance(f)} style={{ ...ghostBtnStyle_(), fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif" }}>View performance</button>
+                          <button onClick={() => openFriendPerformance(f)} style={{ ...ghostBtnStyle_(), fontFamily: "'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif" }}>View performance</button>
                         </div>
                       ) : (
                         <span style={{ fontSize: 12, color: COLORS.textMuted }}>{friendStatsLoading ? "Loading…" : "—"}</span>
@@ -6121,7 +6126,7 @@ function App() {
   }
 
   const loadingScreen = (text) => (
-    <div style={{ display: "flex", minHeight: "100vh", alignItems: "center", justifyContent: "center", background: COLORS.bg, color: COLORS.textMuted, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif" }}>
+    <div style={{ display: "flex", minHeight: "100vh", alignItems: "center", justifyContent: "center", background: COLORS.bg, color: COLORS.textMuted, fontFamily: "'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif" }}>
       {text}
     </div>
   );
