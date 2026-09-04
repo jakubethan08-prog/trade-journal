@@ -75,7 +75,7 @@
   <div class="wrap">
     <a class="back" href="/">← Back to A+ Trades</a>
     <h1>Privacy Policy</h1>
-    <div class="meta">Last updated: 29 August 2026</div>
+    <div class="meta">Last updated: 4 September 2026</div>
 
     <p>A+ Trades ("A+ Trades", "we", "us") is operated by an individual, Jakub O'Meally, based in Poland. This policy explains what data A+ Trades collects, why, and what rights you have over it.</p>
 
@@ -108,6 +108,7 @@
       <li><strong>Vercel Inc.</strong> (hosting) — serves the app and its serverless functions, and sees standard request logs (IP address, timestamps).</li>
       <li><strong>Google LLC</strong> (Google Fonts) — your browser loads the app's typeface directly from Google's font servers (<code>fonts.googleapis.com</code> / <code>fonts.gstatic.com</code>), which means Google receives your IP address for that request. See <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google's privacy policy</a>.</li>
       <li><strong>Cloudflare, Inc.</strong> and <strong>jsDelivr</strong> — deliver the open-source code libraries (React, Babel, Supabase's client library) the app runs on. Your browser fetches these directly from <code>cdnjs.cloudflare.com</code> and <code>cdn.jsdelivr.net</code>, which likewise receive your IP address for that request.</li>
+      <li><strong>Anthropic, PBC</strong> — powers the Insights tab's journal analysis (see §4 below): the text of journal entries you've written, plus basic details of any trade an entry is linked to, is sent to Anthropic's Claude API to generate that analysis. See <a href="https://www.anthropic.com/legal/privacy" target="_blank" rel="noopener">Anthropic's privacy policy</a>.</li>
     </ul>
     <p>These providers may process data outside Poland/the EEA (e.g. in the United States). Where that happens, they do so under their own GDPR-compliant safeguards (such as EU Standard Contractual Clauses) — see each provider's own privacy policy for details.</p>
     <p>We never sell your data, and we never share your individual trades with anyone unless you explicitly choose to (accepting a friend, joining a group, or opting into the leaderboard).</p>
@@ -116,7 +117,7 @@
     <p>A+ Trades itself was built with the help of AI coding tools (Anthropic's Claude). Separately, inside the app:</p>
     <ul>
       <li>Journal entries are automatically, locally checked against a fixed list of crisis-related keywords (e.g. mentions of suicide or self-harm) so we can show you crisis-support resources if you write something concerning. This is simple keyword matching, not an AI model, doesn't diagnose or judge anything, is not sent anywhere or reviewed by a person, and never blocks or changes what you save.</li>
-      <li>We don't currently use AI to read, analyze, or generate insights from your trading data. If that changes, we'll describe it here before it ships.</li>
+      <li>The <strong>Insights</strong> tab's "From your journal" section sends the text of your journal entries (notes, feelings, conditions — not your account credentials or billing data) to Anthropic's Claude API, to surface behavioral patterns your own words describe. This runs automatically when you open that tab and there's new or changed journal text to analyze, and you can trigger it manually with the "Re-analyze" button. The rest of the Insights tab is plain arithmetic over your structured trade data and never leaves your device.</li>
     </ul>
 
     <h2>5. Cookies &amp; local storage</h2>

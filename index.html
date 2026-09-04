@@ -1096,6 +1096,29 @@ function EmptyState({ text, loading = false }) {
     </div>
   );
 }
+function InsightCard({ tone, title, body }) {
+  const toneColor = tone === "bad" ? COLORS.loss : tone === "good" ? COLORS.win : COLORS.accent;
+  const toneLabel = tone === "bad" ? "Fix" : tone === "good" ? "Strength" : "Tip";
+  return (
+    <div
+      style={{
+        background: COLORS.card, border: `1px solid ${COLORS.border}`, borderLeft: `3px solid ${toneColor}`,
+        borderRadius: 14, padding: "16px 18px", boxShadow: "0 1px 2px rgba(23,21,51,0.04)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+        <span style={{
+          fontSize: 10, fontWeight: 700, color: toneColor, textTransform: "uppercase", letterSpacing: "0.04em",
+          background: toneColor + "1E", borderRadius: 6, padding: "2px 7px",
+        }}>
+          {toneLabel}
+        </span>
+        <div style={{ fontSize: 14, fontWeight: 700 }}>{title}</div>
+      </div>
+      <div style={{ fontSize: 13, color: COLORS.textMuted, lineHeight: 1.55 }}>{body}</div>
+    </div>
+  );
+}
 
 // ---- Targets panel content, shared between the docked Settings card and the
 // pop-out floating window so edits (and the live chart underneath) match. ----
@@ -1581,6 +1604,10 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
   const [tab, setTab] = useState("dashboard");
   const [trades, setTrades] = useState([]);
   const [entries, setEntries] = useState([]);
+  const [journalInsights, setJournalInsights] = useState([]);
+  const [journalInsightsLoading, setJournalInsightsLoading] = useState(false);
+  const [journalInsightsError, setJournalInsightsError] = useState(null);
+  const [journalInsightsRunAt, setJournalInsightsRunAt] = useState(null);
   const [targets, setTargets] = useState(() => rowToTargets(null));
   const [dataLoading, setDataLoading] = useState(true);
   const [saveError, setSaveError] = useState(null);
@@ -3438,6 +3465,71 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
     return list.sort((a, b) => b.weight - a.weight);
   })();
 
+  // Fingerprint of every journal entry with real free text — used to decide
+  // whether the AI journal-text analysis (below) needs to re-run. Changes
+  // whenever a texty entry is added, edited, or removed; stays put on a
+  // plain re-render or tab switch, so that pass only ever re-runs (and
+  // re-costs) when there's actually something new to read.
+  const journalFingerprint = entries
+    .filter((en) => ((en.notes || "") + (en.feelingDetail || "") + (en.conditions || "")).trim().length >= 15)
+    .map((en) => `${en.id}:${en.notes || ""}|${en.feelingDetail || ""}|${en.conditions || ""}`)
+    .join("~");
+
+  // Journal free text (notes/feeling/conditions) is the one input source the
+  // client-side Insights rules engine above can't read — this asks Claude to
+  // find concrete behavioral patterns in it instead. Triggered automatically
+  // by the effect below whenever the Insights tab is open and the journal
+  // content has changed since the last analysis, so it never re-runs (and
+  // re-costs) on unchanged data.
+  async function fetchJournalInsights(fingerprintToCache) {
+    setJournalInsightsLoading(true);
+    setJournalInsightsError(null);
+    try {
+      const { data: sessionData } = await supabaseClient.auth.getSession();
+      const token = sessionData.session && sessionData.session.access_token;
+      const res = await fetch("/api/journal-insights", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "Could not analyze journal entries.");
+      const runAt = Date.now();
+      setJournalInsights(body.insights || []);
+      setJournalInsightsRunAt(runAt);
+      try {
+        localStorage.setItem(`aiInsightsFp:${userId}`, fingerprintToCache || "");
+        localStorage.setItem(`aiInsightsCache:${userId}`, JSON.stringify({ insights: body.insights || [], runAt }));
+      } catch (e) { /* localStorage unavailable — cache just won't persist across reloads */ }
+    } catch (err) {
+      setJournalInsightsError(err.message || "Could not analyze journal entries.");
+    } finally {
+      setJournalInsightsLoading(false);
+    }
+  }
+
+  // Auto-run the journal analysis whenever the Insights tab is open and the
+  // texty-journal fingerprint has changed since the last run — on first
+  // visit this means "as soon as there's enough to read"; after that, only
+  // when a new/edited entry actually changes what there is to analyze. A
+  // matching cached result (same fingerprint) is reused instead of re-
+  // calling the API, so reopening the tab or reloading the page is free.
+  useEffect(() => {
+    if (tab !== "insights" || !journalFingerprint) return;
+    let cachedFp = null;
+    let cached = null;
+    try {
+      cachedFp = localStorage.getItem(`aiInsightsFp:${userId}`);
+      const raw = localStorage.getItem(`aiInsightsCache:${userId}`);
+      if (raw) cached = JSON.parse(raw);
+    } catch (e) { /* localStorage unavailable — fall through and refetch */ }
+    if (cachedFp === journalFingerprint && cached) {
+      setJournalInsights(cached.insights || []);
+      setJournalInsightsRunAt(cached.runAt || null);
+      return;
+    }
+    fetchJournalInsights(journalFingerprint);
+  }, [tab, journalFingerprint]);
+
   const profitTargetNum = targets.profitTarget === "" ? null : Number(targets.profitTarget);
   const maxLossNum = targets.maxLoss === "" ? null : Number(targets.maxLoss);
   // Minimum Balance floor: always trails the peak by the Max Loss amount (e.g. max loss $2,000,
@@ -4754,31 +4846,45 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                 }
               />
             ) : (
-              <div style={{ display: "grid", gap: 12 }}>
-                {insights.map((ins) => {
-                  const toneColor = ins.tone === "bad" ? COLORS.loss : ins.tone === "good" ? COLORS.win : COLORS.accent;
-                  const toneLabel = ins.tone === "bad" ? "Fix" : ins.tone === "good" ? "Strength" : "Tip";
-                  return (
-                    <div
-                      key={ins.id}
-                      style={{
-                        background: COLORS.card, border: `1px solid ${COLORS.border}`, borderLeft: `3px solid ${toneColor}`,
-                        borderRadius: 14, padding: "16px 18px", boxShadow: "0 1px 2px rgba(23,21,51,0.04)",
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                        <span style={{
-                          fontSize: 10, fontWeight: 700, color: toneColor, textTransform: "uppercase", letterSpacing: "0.04em",
-                          background: toneColor + "1E", borderRadius: 6, padding: "2px 7px",
-                        }}>
-                          {toneLabel}
-                        </span>
-                        <div style={{ fontSize: 14, fontWeight: 700 }}>{ins.title}</div>
-                      </div>
-                      <div style={{ fontSize: 13, color: COLORS.textMuted, lineHeight: 1.55 }}>{ins.body}</div>
-                    </div>
-                  );
-                })}
+              <div style={{ display: "grid", gap: 12, marginBottom: 28 }}>
+                {insights.map((ins) => (
+                  <InsightCard key={ins.id} tone={ins.tone} title={ins.title} body={ins.body} />
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>From your journal</div>
+                <div style={{ fontSize: 11.5, color: COLORS.textMuted, marginTop: 2 }}>
+                  AI-read patterns from your journal notes — the rest of this tab only reads structured fields, this reads what you actually wrote.
+                  {journalInsightsRunAt && !journalInsightsLoading && ` Last analyzed ${new Date(journalInsightsRunAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}.`}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => fetchJournalInsights(journalFingerprint)}
+                disabled={journalInsightsLoading || !journalFingerprint}
+                style={{ ...ghostBtnStyle_(), opacity: journalInsightsLoading || !journalFingerprint ? 0.5 : 1, cursor: journalInsightsLoading || !journalFingerprint ? "not-allowed" : "pointer" }}
+              >
+                {journalInsightsLoading ? "Analyzing…" : "Re-analyze"}
+              </button>
+            </div>
+            {journalInsightsError ? (
+              <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>
+                {journalInsightsError}
+              </div>
+            ) : !journalFingerprint ? (
+              <EmptyState text="Write a journal entry with some real notes — what happened, how you felt, what you'd do differently — and this section fills in on its own." />
+            ) : journalInsightsLoading && journalInsights.length === 0 ? (
+              <EmptyState text="Reading your journal…" loading />
+            ) : journalInsights.length === 0 ? (
+              <EmptyState text="Nothing notable found in your journal text yet — keep writing real detail (not just a mood tag) and this will pick up on patterns as they show up." />
+            ) : (
+              <div style={{ display: "grid", gap: 12, opacity: journalInsightsLoading ? 0.6 : 1 }}>
+                {journalInsights.map((ins, i) => (
+                  <InsightCard key={i} tone={ins.tone} title={ins.title} body={ins.body} />
+                ))}
               </div>
             )}
           </>
