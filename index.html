@@ -608,6 +608,13 @@ function IconPatterns({ active }) {
     </svg>
   );
 }
+function IconInsights({ active }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+      <path d="M9 18H15M10 21H14M8 13.5C6.5 12.3 5.5 10.6 5.5 8.7C5.5 5.5 8 3 12 3C16 3 18.5 5.5 18.5 8.7C18.5 10.6 17.5 12.3 16 13.5C15.2 14.2 14.5 15.3 14.3 16.5H9.7C9.5 15.3 8.8 14.2 8 13.5Z" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
 function IconJournal({ active }) {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
@@ -3300,6 +3307,137 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
     };
   });
 
+  // ---- Insights: a small rules engine over live trade/pattern/journal data.
+  // Recomputed fresh on every render (nothing is stored or "generated" once)
+  // so it always reflects whatever's been logged up to this second — add or
+  // edit a trade, tag a pattern, or write a journal entry, and this list
+  // updates right along with it.
+  const insights = (() => {
+    const list = []; // { id, tone: 'bad' | 'good' | 'tip', title, body, weight }
+    const MIN_SAMPLE = 3;
+
+    // Rule adherence: does actually following the plan pay off?
+    const ruledTrades = tradingOnly.filter((t) => t.rulesFollowed === true || t.rulesFollowed === false);
+    const followed = ruledTrades.filter((t) => t.rulesFollowed === true);
+    const broke = ruledTrades.filter((t) => t.rulesFollowed === false);
+    if (followed.length >= MIN_SAMPLE && broke.length >= MIN_SAMPLE) {
+      const avgFollowed = followed.reduce((s, t) => s + t.pnl, 0) / followed.length;
+      const avgBroke = broke.reduce((s, t) => s + t.pnl, 0) / broke.length;
+      const gap = avgFollowed - avgBroke;
+      if (gap > 0) {
+        const drag = gap * broke.length;
+        list.push({
+          id: "rules-gap", tone: "bad", weight: Math.abs(drag),
+          title: "Breaking your own rules is costing you",
+          body: `On the ${followed.length} trades where you followed your plan you averaged ${fmtMoney(avgFollowed)}; on the ${broke.length} where you didn't, ${fmtMoney(avgBroke)}. That gap has cost you roughly ${fmtMoney(drag)} across your off-plan trades — the single highest-leverage fix available right now is simply not taking the trade when it breaks your rules.`,
+        });
+      } else {
+        list.push({
+          id: "rules-gap-ok", tone: "good", weight: 20,
+          title: "Your rules aren't the bottleneck",
+          body: `Trades where you broke your rules (${fmtMoney(avgBroke)} avg) did no worse than the ones where you followed them (${fmtMoney(avgFollowed)} avg) — so if something's holding back your results, it's more likely setup selection or sizing than discipline.`,
+        });
+      }
+    }
+
+    // Best / worst pattern by expectancy — a truer measure of edge than win rate alone.
+    const scoredPatterns = patternPerf.filter((p) => p.count >= MIN_SAMPLE);
+    if (scoredPatterns.length) {
+      const worst = [...scoredPatterns].sort((a, b) => a.expectancy - b.expectancy)[0];
+      const best = [...scoredPatterns].sort((a, b) => b.expectancy - a.expectancy)[0];
+      if (worst.expectancy < 0) {
+        const drag = worst.expectancy * worst.count;
+        list.push({
+          id: `pattern-worst-${worst.id}`, tone: "bad", weight: Math.abs(drag),
+          title: `"${worst.name || worst.label}" is a net negative`,
+          body: `Across ${worst.count} trades this pattern has an expectancy of ${fmtMoney(worst.expectancy)} per trade (${worst.winRateP}% win rate) — roughly ${fmtMoney(Math.abs(drag))} lost to it overall. Unless it's been mis-tagged, consider cutting it from your rules entirely.`,
+        });
+      }
+      if (best.expectancy > 0 && best.id !== worst.id) {
+        list.push({
+          id: `pattern-best-${best.id}`, tone: "good", weight: best.expectancy * best.count * 0.6,
+          title: `"${best.name || best.label}" is your strongest edge`,
+          body: `${best.count} trades, ${best.winRateP}% win rate, and an expectancy of +${fmtMoney(best.expectancy)} per trade. This is the setup to size up on and actively look for — everything else is competing with this for your attention.`,
+        });
+      }
+    }
+
+    // Duration sweet spot / danger zone.
+    const scoredDurations = durationBucketStats.filter((b) => b.count >= MIN_SAMPLE);
+    if (scoredDurations.length) {
+      const worstDur = [...scoredDurations].sort((a, b) => a.avgNetPnl - b.avgNetPnl)[0];
+      const bestDur = [...scoredDurations].sort((a, b) => b.avgNetPnl - a.avgNetPnl)[0];
+      if (worstDur.avgNetPnl < 0 && worstDur.label !== bestDur.label) {
+        list.push({
+          id: "duration-worst", tone: "bad", weight: Math.abs(worstDur.avgNetPnl) * worstDur.count * 0.5,
+          title: `Trades held ${worstDur.label} are dragging you down`,
+          body: `${worstDur.count} trades in this duration band average ${fmtMoney(worstDur.avgNetPnl)}, versus ${fmtMoney(bestDur.avgNetPnl)} for trades held ${bestDur.label}. Watch what's different about how you manage a trade once it crosses into this window — it's often either overstaying a loser or cutting a winner short from boredom.`,
+        });
+      }
+    }
+
+    // Day-of-week weakness.
+    if (mostProfitableDay && leastProfitableDay && mostProfitableDay.label !== leastProfitableDay.label && leastProfitableDay.avgPnl < 0) {
+      list.push({
+        id: "weekday-weak", tone: "bad", weight: Math.abs(leastProfitableDay.avgPnl) * 8,
+        title: `${leastProfitableDay.label}s are your weakest day`,
+        body: `You average ${fmtMoney(leastProfitableDay.avgPnl)} per day trading on ${leastProfitableDay.label}s, against ${fmtMoney(mostProfitableDay.avgPnl)} on ${mostProfitableDay.label}s. If that holds up over more data, trading smaller (or not at all) on ${leastProfitableDay.label}s is a low-effort way to raise your average.`,
+      });
+    }
+
+    // R:R vs win rate math check.
+    if (avgRR !== null && avgRR > 0 && tradingOnly.length >= 5) {
+      const breakevenWinRate = (1 / (1 + avgRR)) * 100;
+      if (winRate < breakevenWinRate - 5) {
+        list.push({
+          id: "rr-math", tone: "bad", weight: (breakevenWinRate - winRate) * 3,
+          title: "Your win rate doesn't support your R:R",
+          body: `At an average R:R of ${avgRR.toFixed(2)}, you need roughly a ${Math.round(breakevenWinRate)}% win rate just to break even — you're at ${winRate}%. Either tighten entries to raise the win rate, or let winners run further to raise the average R:R; right now the math is working against you.`,
+        });
+      }
+    }
+
+    // Position sizing consistency.
+    const riskedTrades = tradingOnly.filter((t) => t.risk !== null && t.risk !== undefined && t.risk > 0);
+    if (riskedTrades.length >= 5) {
+      const risks = riskedTrades.map((t) => t.risk);
+      const minRisk = Math.min(...risks), maxRisk = Math.max(...risks);
+      if (maxRisk > minRisk * 3 && maxRisk - minRisk > 0.5) {
+        list.push({
+          id: "risk-consistency", tone: "tip", weight: 15,
+          title: "Your position sizing swings a lot",
+          body: `Risk per trade has ranged from ${minRisk}% to ${maxRisk}% with no clear pattern. Wide, ad-hoc sizing makes it hard to tell whether a run of results came from your edge or from how big you happened to size that trade — picking a standard risk per setup type would make your stats easier to trust.`,
+        });
+      }
+    }
+
+    // Mood correlation, from journal entries linked to trades.
+    const scoredMoods = patternStats.filter((p) => p.count >= MIN_SAMPLE);
+    if (scoredMoods.length >= 2) {
+      const worstMood = [...scoredMoods].sort((a, b) => a.avg - b.avg)[0];
+      const bestMood = [...scoredMoods].sort((a, b) => b.avg - a.avg)[0];
+      if (worstMood.avg < 0 && worstMood.label !== bestMood.label) {
+        list.push({
+          id: "mood-worst", tone: "bad", weight: Math.abs(worstMood.avg) * worstMood.count * 0.4,
+          title: `Trades logged as feeling "${worstMood.label}" underperform`,
+          body: `${worstMood.count} trades linked to a "${worstMood.label}" journal entry average ${fmtMoney(worstMood.avg)}, versus ${fmtMoney(bestMood.avg)} when you logged "${bestMood.label}". That feeling is worth treating as a warning sign to slow down or step away before you enter, not just a note after the fact.`,
+        });
+      }
+    }
+
+    // Journal coverage — encourages the input this whole feature depends on.
+    const linkedTradeCount = new Set(entries.filter((en) => en.tradeId).map((en) => en.tradeId)).size;
+    if (tradingOnly.length >= 8 && linkedTradeCount / tradingOnly.length < 0.3) {
+      list.push({
+        id: "journal-coverage", tone: "tip", weight: 10,
+        title: "Journal more trades to sharpen these insights",
+        body: `Only ${linkedTradeCount} of your ${tradingOnly.length} trades have a linked journal entry. Mood-based insights — like which emotional states correlate with your best and worst trades — get more reliable the more trades you log a feeling for, even a one-line entry.`,
+      });
+    }
+
+    return list.sort((a, b) => b.weight - a.weight);
+  })();
+
   const profitTargetNum = targets.profitTarget === "" ? null : Number(targets.profitTarget);
   const maxLossNum = targets.maxLoss === "" ? null : Number(targets.maxLoss);
   // Minimum Balance floor: always trails the peak by the Max Loss amount (e.g. max loss $2,000,
@@ -3312,6 +3450,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
     { key: "dashboard", label: "Dashboard", Icon: IconDashboard },
     { key: "calendar", label: "Performance", Icon: IconCalendar },
     { key: "patterns", label: "Patterns", Icon: IconPatterns },
+    { key: "insights", label: "Insights", Icon: IconInsights },
     { key: "media", label: "Trades", Icon: IconTrades },
     { key: "journal", label: "Journal", Icon: IconJournal },
     { key: "friends", label: "Friends", Icon: IconFriends },
@@ -3482,6 +3621,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
             <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.2)", margin: "0 auto 10px" }} />
             {[
               { key: "patterns", label: "Patterns", Icon: IconPatterns },
+              { key: "insights", label: "Insights", Icon: IconInsights },
               { key: "friends", label: "Friends", Icon: IconFriends },
               { key: "leaderboard", label: "Leaderboard", Icon: IconLeaderboard },
             ].map(({ key, label, Icon }) => {
@@ -3547,10 +3687,10 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
         <header style={{ marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
           <div>
             <h1 style={{ fontSize: 24, margin: 0, fontWeight: 700, letterSpacing: "-0.01em" }}>
-              {tab === "dashboard" ? "Dashboard" : tab === "trades" ? "Add Trade" : tab === "media" ? "Trades" : tab === "calendar" ? "Performance" : tab === "patterns" ? "Patterns" : tab === "friends" ? "Friends" : tab === "leaderboard" ? "Leaderboard" : tab === "feedback" ? "Feedback" : tab === "settings" ? "Settings" : "Journal"}
+              {tab === "dashboard" ? "Dashboard" : tab === "trades" ? "Add Trade" : tab === "media" ? "Trades" : tab === "calendar" ? "Performance" : tab === "patterns" ? "Patterns" : tab === "insights" ? "Insights" : tab === "friends" ? "Friends" : tab === "leaderboard" ? "Leaderboard" : tab === "feedback" ? "Feedback" : tab === "settings" ? "Settings" : "Journal"}
             </h1>
             <div style={{ fontSize: 13, color: COLORS.textMuted, marginTop: 2 }}>
-              {tab === "dashboard" ? "Your performance and your friends'" : tab === "trades" ? "Log and review every trade" : tab === "media" ? "Every photo and video, across every trade" : tab === "calendar" ? "Account growth and daily/weekly P&L" : tab === "patterns" ? "" : tab === "friends" ? "See each other's trades" : tab === "leaderboard" ? "See how you rank, opt-in only" : tab === "feedback" ? "Tell us what to build next" : tab === "settings" ? "Targets and appearance" : "Track how you felt and why"}
+              {tab === "dashboard" ? "Your performance and your friends'" : tab === "trades" ? "Log and review every trade" : tab === "media" ? "Every photo and video, across every trade" : tab === "calendar" ? "Account growth and daily/weekly P&L" : tab === "patterns" ? "" : tab === "insights" ? "What your data says you should do next" : tab === "friends" ? "See each other's trades" : tab === "leaderboard" ? "See how you rank, opt-in only" : tab === "feedback" ? "Tell us what to build next" : tab === "settings" ? "Targets and appearance" : "Track how you felt and why"}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
@@ -4601,6 +4741,45 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                   })}
                 </div>
               </>
+            )}
+          </>
+        ) : tab === "insights" ? (
+          <>
+            {insights.length === 0 ? (
+              <EmptyState
+                text={
+                  tradingOnly.length < 5
+                    ? "Log at least 5 trades to unlock personalized insights — the more trades, patterns, and journal entries you add, the sharper these get."
+                    : "No notable issues in your data right now — keep logging trades, patterns, and journal entries and check back as new results come in."
+                }
+              />
+            ) : (
+              <div style={{ display: "grid", gap: 12 }}>
+                {insights.map((ins) => {
+                  const toneColor = ins.tone === "bad" ? COLORS.loss : ins.tone === "good" ? COLORS.win : COLORS.accent;
+                  const toneLabel = ins.tone === "bad" ? "Fix" : ins.tone === "good" ? "Strength" : "Tip";
+                  return (
+                    <div
+                      key={ins.id}
+                      style={{
+                        background: COLORS.card, border: `1px solid ${COLORS.border}`, borderLeft: `3px solid ${toneColor}`,
+                        borderRadius: 14, padding: "16px 18px", boxShadow: "0 1px 2px rgba(23,21,51,0.04)",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                        <span style={{
+                          fontSize: 10, fontWeight: 700, color: toneColor, textTransform: "uppercase", letterSpacing: "0.04em",
+                          background: toneColor + "1E", borderRadius: 6, padding: "2px 7px",
+                        }}>
+                          {toneLabel}
+                        </span>
+                        <div style={{ fontSize: 14, fontWeight: 700 }}>{ins.title}</div>
+                      </div>
+                      <div style={{ fontSize: 13, color: COLORS.textMuted, lineHeight: 1.55 }}>{ins.body}</div>
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </>
         ) : tab === "friends" ? (
