@@ -13,19 +13,46 @@
 <meta name="apple-mobile-web-app-title" content="A+ Trades">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-  html, body { margin: 0; padding: 0; background: #F3F4F9; font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif; }
+  html, body {
+    margin: 0; padding: 0; background: #F6F5FB;
+    font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+  }
+  body.dark-theme { background: #0E0D18; }
   * { box-sizing: border-box; }
   input, textarea, select, button { font-family: inherit; }
   input:focus, textarea:focus, select:focus, button:focus-visible {
     outline: 2px solid #6C4FE0;
     outline-offset: 1px;
   }
-  ::placeholder { color: #A6ABBD; }
-  .mono { font-family: 'SFMono-Regular', ui-monospace, 'IBM Plex Mono', Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; font-feature-settings: "zero" 0, "cv01" 0, "ss20" 0; }
+  ::placeholder { color: #A9A6BD; }
+  h1, h2, h3 { text-wrap: balance; }
+  /* Numbers: same face as the body text, with fixed-width digits so columns
+     of P&L line up and live values don't shift as they change. (Kept the old
+     class name — it's on 60+ elements.) */
+  .mono { font-family: inherit; font-variant-numeric: tabular-nums; }
+  /* Display face for page titles, the brand, and headline numbers. */
+  .display { font-family: 'Bricolage Grotesque', 'Manrope', sans-serif; font-optical-sizing: auto; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
   ::-webkit-scrollbar { width: 8px; height: 8px; }
-  ::-webkit-scrollbar-thumb { background: #D8DAE8; border-radius: 8px; }
+  ::-webkit-scrollbar-thumb { background: #D9D6E8; border-radius: 8px; }
+  body.dark-theme ::-webkit-scrollbar-thumb { background: #2E2A48; }
+
+  /* Stat strip: one surface split into cells by 1px gaps (the container's
+     background shows through as the dividers), so a row of stats reads as a
+     single instrument instead of a row of separate cards. */
+  .stat-strip { display: grid; gap: 1px; border-radius: 18px; overflow: hidden; }
+  .stat-strip > * { border-radius: 0 !important; border: none !important; box-shadow: none !important; }
+
+  /* The one orchestrated motion moment: the dashboard growth curve draws in. */
+  @keyframes curveDraw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+  @keyframes curveFade { from { opacity: 0; } to { opacity: 1; } }
+  .curve-draw { stroke-dasharray: 1; stroke-dashoffset: 0; animation: curveDraw 0.9s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .curve-fade { animation: curveFade 0.6s ease-out 0.35s both; }
+  @media (prefers-reduced-motion: reduce) {
+    .curve-draw, .curve-fade, .skeleton-bar { animation: none !important; }
+  }
   /* Everything clickable gets the same feel: a quick settle on state change,
      a slight darken on hover, a slight press on click. The [style*="cursor:
      pointer"] selector catches the many onClick'd divs (calendar cells, list
@@ -63,7 +90,11 @@
     .mobile-bottom-nav { display: flex !important; }
     .mobile-fab { display: flex !important; }
     .stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
+    .stat-strip > :last-child:nth-child(odd) { grid-column: 1 / -1; }
     .dashboard-hero { grid-template-columns: 1fr !important; }
+    .growth-hero { padding: 18px 16px 10px !important; }
+    .growth-hero-balance { font-size: 36px !important; }
+    .page-title { font-size: 26px !important; }
   }
 </style>
 </head>
@@ -108,42 +139,66 @@ const ADMIN_FEEDBACK_EMAIL = "jakubethan08@icloud.com";
 
 const PAYOUT_COLOR = "#0B93CC";
 
+// `ink` is the deep violet shared by the sidebar and the dashboard's growth
+// panel. `shadow` is layered (a tight contact shadow plus a soft lift) so
+// cards separate from the canvas by depth rather than by hard outlines.
 const LIGHT_COLORS = {
-  bg: "#F5F5FB",
-  sidebar: "#15132C",
+  bg: "#F6F5FB",
+  sidebar: "#17142E",
   sidebarActive: "#6C4FE0",
   card: "#FFFFFF",
-  border: "#E4E5F0",
-  text: "#1A1C2C",
-  textMuted: "#82869B",
+  border: "#E9E7F2",
+  borderStrong: "#D9D6E8",
+  text: "#1B1931",
+  textMuted: "#7D7A94",
   accent: "#6C4FE0",
-  accentSoft: "#EEE8FE",
+  accentSoft: "#EFEBFF",
   win: "#12A454",
   winSoft: "#E5F7ED",
   loss: "#E0323B",
   lossSoft: "#FCE8E9",
   payout: PAYOUT_COLOR,
   payoutSoft: "#E0F0FA",
-  subtleBg: "#FAFAFD",
+  subtleBg: "#F9F8FC",
+  ink: "#17142E",
+  shadow: "0 1px 2px rgba(27,22,64,0.04), 0 8px 24px -12px rgba(27,22,64,0.12)",
 };
 
 const DARK_COLORS = {
-  bg: "#0F111A",
-  sidebar: "#0A0B13",
+  bg: "#0E0D18",
+  sidebar: "#09080F",
   sidebarActive: "#7C63F5",
-  card: "#181B27",
-  border: "#292D3D",
-  text: "#EDEEF5",
-  textMuted: "#898DA3",
+  card: "#17152A",
+  border: "#27243D",
+  borderStrong: "#36324F",
+  text: "#EEEDF7",
+  textMuted: "#8D8AA6",
   accent: "#9683FF",
-  accentSoft: "#2B2350",
+  accentSoft: "#2A2350",
   win: "#2FD48A",
   winSoft: "#143226",
   loss: "#FF6B6B",
   lossSoft: "#3B1E21",
   payout: "#38B6F5",
   payoutSoft: "#153847",
-  subtleBg: "#1F222E",
+  subtleBg: "#1C1932",
+  ink: "#1C1838",
+  shadow: "0 1px 0 rgba(255,255,255,0.03) inset, 0 12px 32px -14px rgba(0,0,0,0.7)",
+};
+
+// Fixed palette for anything drawn ON the ink panel — it stays dark in both
+// themes, so it can't read from COLORS.
+const INK_UI = {
+  text: "#F4F2FF",
+  textMuted: "rgba(226,222,255,0.58)",
+  line: "#B3A5FF",
+  grid: "rgba(255,255,255,0.09)",
+  tooltipBg: "#26214A",
+  tooltipBorder: "rgba(255,255,255,0.12)",
+  win: "#4BE39B",
+  loss: "#FF7A85",
+  chipBg: "rgba(255,255,255,0.07)",
+  chipActive: "rgba(255,255,255,0.16)",
 };
 
 const THEME_KEY = "tj_theme_v1";
@@ -238,6 +293,35 @@ function uid() {
 }
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
+}
+// Local-calendar YYYY-MM-DD (todayStr above is UTC, which can be a day off
+// in the evening) — used for the growth-curve range so "past 30 days" means
+// the user's own last 30 days.
+function localDateStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function daysAgoStr(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return localDateStr(d);
+}
+// Growth-curve range presets, shared by the dashboard toggle and the
+// Performance tab. "all" clears the range entirely.
+const CURVE_RANGES = [
+  { key: "1w", label: "1W", days: 7 },
+  { key: "30d", label: "30D", days: 30 },
+  { key: "6m", label: "6M", days: 182 },
+  { key: "1y", label: "1Y", days: 365 },
+  { key: "all", label: "All time", days: null },
+];
+const DEFAULT_CURVE_RANGE = "30d";
+function curveRangePhrase(key) {
+  if (key === "1w") return "past week";
+  if (key === "30d") return "past 30 days";
+  if (key === "6m") return "past 6 months";
+  if (key === "1y") return "past year";
+  if (key === "all") return "all time";
+  return "selected range";
 }
 function fmtMoney(n) {
   const num = Number(n) || 0;
@@ -663,13 +747,121 @@ function IconLeaderboard({ active }) {
     </svg>
   );
 }
+// Utility icons for the sidebar footer (theme, feedback, settings, log out) —
+// same 24-grid, 2px-stroke style as the nav icons above, replacing emoji.
+function IconMoon({ active }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+      <path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+function IconSun({ active }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="4" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2"/>
+      <path d="M12 2.5V4.5M12 19.5V21.5M21.5 12H19.5M4.5 12H2.5M18.7 5.3L17.3 6.7M6.7 17.3L5.3 18.7M18.7 18.7L17.3 17.3M6.7 6.7L5.3 5.3" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2" strokeLinecap="round"/>
+    </svg>
+  );
+}
+function IconChat({ active }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+      <path d="M4 5.5C4 4.67 4.67 4 5.5 4H18.5C19.33 4 20 4.67 20 5.5V15.5C20 16.33 19.33 17 18.5 17H9L5 20.5V17H5.5C4.67 17 4 16.33 4 15.5V5.5Z" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+function IconGear({ active }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="3" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2"/>
+      <path d="M12 2.5L14 5L17.2 4.6L17.9 7.7L20.8 9.2L19.6 12L20.8 14.8L17.9 16.3L17.2 19.4L14 19L12 21.5L10 19L6.8 19.4L6.1 16.3L3.2 14.8L4.4 12L3.2 9.2L6.1 7.7L6.8 4.6L10 5L12 2.5Z" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+function IconLogout({ active }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+      <path d="M14 4H6.5C5.67 4 5 4.67 5 5.5V18.5C5 19.33 5.67 20 6.5 20H14" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2" strokeLinecap="round"/>
+      <path d="M10 12H20M20 12L16.5 8.5M20 12L16.5 15.5" stroke={active ? "#fff" : "#8B8FA3"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+// The brand mark: the "A+" grade itself, set in the display face on the
+// brand violet — used in the sidebar, on the auth screen and the paywall.
+function BrandMark({ size = 32 }) {
+  return (
+    <div
+      className="display"
+      style={{
+        width: size, height: size, borderRadius: Math.round(size * 0.3), flexShrink: 0,
+        background: "#6C4FE0", color: "#fff",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: Math.round(size * 0.46), fontWeight: 800, letterSpacing: "-0.04em",
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.22), 0 6px 18px -6px rgba(108,79,224,0.7)",
+      }}
+    >
+      A+
+    </div>
+  );
+}
 
 // ---- Stable, top-level presentational components ----
 function StatCard({ label, value, color }) {
   return (
-    <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "16px 18px", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
-      <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 500, marginBottom: 8 }}>{label}</div>
-      <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: color || COLORS.text }}>{value}</div>
+    <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "16px 18px", boxShadow: COLORS.shadow, minWidth: 0 }}>
+      <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600, marginBottom: 6 }}>{label}</div>
+      <div className="display" style={{ fontSize: 24, fontWeight: 700, lineHeight: 1.2, color: color || COLORS.text, overflowWrap: "anywhere" }}>{value}</div>
+    </div>
+  );
+}
+
+// A row of StatCards fused into one surface (see .stat-strip in the <style>).
+function StatStrip({ columns, children, style }) {
+  return (
+    <div
+      className="stat-strip stats-grid"
+      style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, background: COLORS.border, boxShadow: COLORS.shadow, ...style }}
+    >
+      {children}
+    </div>
+  );
+}
+
+// Segmented control for the growth-curve range. `tone="ink"` styles it for
+// the dark dashboard panel.
+function CurveRangeToggle({ value, onChange, options, tone }) {
+  const onInk = tone === "ink";
+  return (
+    <div
+      role="group"
+      aria-label="Growth curve range"
+      style={{
+        display: "inline-flex", gap: 2, padding: 3, borderRadius: 11,
+        background: onInk ? INK_UI.chipBg : COLORS.subtleBg,
+        boxShadow: onInk ? "inset 0 0 0 1px rgba(255,255,255,0.06)" : `inset 0 0 0 1px ${COLORS.border}`,
+      }}
+    >
+      {options.map((o) => {
+        const active = value === o.key;
+        return (
+          <button
+            key={o.key}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(o.key)}
+            style={{
+              border: "none", cursor: "pointer", borderRadius: 8, padding: "6px 11px",
+              fontSize: 12, fontWeight: 700, whiteSpace: "nowrap",
+              background: active ? (onInk ? INK_UI.chipActive : COLORS.card) : "transparent",
+              color: active ? (onInk ? INK_UI.text : COLORS.text) : (onInk ? INK_UI.textMuted : COLORS.textMuted),
+              boxShadow: active && !onInk ? "0 1px 2px rgba(27,22,64,0.10)" : "none",
+            }}
+          >
+            {o.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -681,6 +873,25 @@ function Field({ label, children, style }) {
       {children}
     </div>
   );
+}
+
+// Tracks an element's rendered width so the charts can draw in real pixels
+// (their viewBox used to be a fixed 900 wide and get stretched to fit, which
+// distorted every label on narrow or very wide screens).
+function useMeasuredWidth() {
+  const ref = useRef(null);
+  const [w, setW] = useState(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      const next = Math.round(entries[0].contentRect.width);
+      if (next > 0) setW((prev) => (prev === next ? prev : next));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, w];
 }
 
 function smoothPath(pts) {
@@ -701,14 +912,28 @@ function smoothPath(pts) {
   return d;
 }
 
-function EquityChart({ points, width = 900, height = 220, profitTarget = null, maxLossLevel = null, axisStep = null, growthColor = null, profitColor = null, minBalanceColor = null, axisColor = null, payoutColor = null }) {
+// tone="ink" draws the chart for the dark dashboard panel (fixed INK_UI
+// palette, violet line). `animate` draws the line in on mount — and again
+// whenever `animateKey` changes, e.g. when the range toggle changes.
+function EquityChart({ points, width: fallbackWidth = 900, height = 220, profitTarget = null, maxLossLevel = null, axisStep = null, growthColor = null, profitColor = null, minBalanceColor = null, axisColor = null, payoutColor = null, tone = null, animate = false, animateKey = "", fitToData = false, emptyText = "Log trades to see your account grow." }) {
   const svgRef = useRef(null);
   const [hoverIdx, setHoverIdx] = useState(null);
+  // Unique per instance: two charts can be on screen at once (dashboard +
+  // a friend's performance popup), and a shared id would make one chart's
+  // area fill pick up the other's gradient.
+  const gradIdRef = useRef("eqFill-" + Math.random().toString(36).slice(2, 9));
+  const gradId = gradIdRef.current;
+  const [wrapRef, measuredWidth] = useMeasuredWidth();
+  const width = measuredWidth || fallbackWidth;
+  const onInk = tone === "ink";
+  const C = onInk
+    ? { card: INK_UI.tooltipBg, border: INK_UI.grid, tooltipBorder: INK_UI.tooltipBorder, text: INK_UI.text, textMuted: INK_UI.textMuted, win: INK_UI.win, loss: INK_UI.loss, payout: "#5CC8FF", dotRing: COLORS.ink }
+    : { card: COLORS.card, border: COLORS.border, tooltipBorder: COLORS.border, text: COLORS.text, textMuted: COLORS.textMuted, win: COLORS.win, loss: COLORS.loss, payout: COLORS.payout, dotRing: COLORS.card };
 
   if (!points || points.length < 2) {
     return (
-      <div style={{ height, display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.textMuted, fontSize: 13 }}>
-        Log trades to see your account grow.
+      <div ref={wrapRef} style={{ height, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, fontSize: 13, textAlign: "center", padding: "0 16px" }}>
+        {emptyText}
       </div>
     );
   }
@@ -719,8 +944,14 @@ function EquityChart({ points, width = 900, height = 220, profitTarget = null, m
   if (maxLossLevel !== null && !Number.isNaN(maxLossLevel)) targetLevels.push(maxLossLevel);
   const allMinBalances = points.map((p) => p.minBalance).filter((v) => v !== null && v !== undefined && !Number.isNaN(v));
   if (allMinBalances.length) targetLevels.push(Math.min(...allMinBalances), Math.max(...allMinBalances));
-  const max = Math.max(0, ...balances, ...targetLevels);
-  const min = Math.min(0, ...balances, ...targetLevels);
+  // All-time curves start at $0, so $0 stays on the axis. A ranged view
+  // (fitToData) fits the axis to the data instead, so a 30-day slice of a
+  // large account isn't squashed flat against a distant $0 baseline.
+  const dataMax = fitToData ? Math.max(...balances, ...targetLevels) : Math.max(0, ...balances, ...targetLevels);
+  const dataMin = fitToData ? Math.min(...balances, ...targetLevels) : Math.min(0, ...balances, ...targetLevels);
+  const vPad = fitToData ? Math.max((dataMax - dataMin) * 0.1, 1) : 0;
+  const max = dataMax + vPad;
+  const min = dataMin - vPad;
   const range = max - min || 1;
   const padTop = 16, padBottom = 34, padRight = 62;
   const usableH = height - padTop - padBottom;
@@ -728,7 +959,6 @@ function EquityChart({ points, width = 900, height = 220, profitTarget = null, m
 
   function xAt(i) { return i * stepX; }
   function yAt(bal) { return padTop + usableH - ((bal - min) / range) * usableH; }
-  const zeroY = yAt(0);
 
   function fmtAxis(v) {
     const sign = v < 0 ? "−" : "";
@@ -759,7 +989,7 @@ function EquityChart({ points, width = 900, height = 220, profitTarget = null, m
   const areaPath = `${linePath} L ${xAt(points.length - 1).toFixed(1)} ${chartBottomY.toFixed(1)} L 0 ${chartBottomY.toFixed(1)} Z`;
   const last = points[points.length - 1];
   const positive = last.balance >= 0;
-  const lineColor = growthColor || (positive ? COLORS.win : COLORS.loss);
+  const lineColor = growthColor || (onInk ? INK_UI.line : (positive ? C.win : C.loss));
 
   const datedPoints = points.filter((p) => p.date);
   const years = new Set(datedPoints.map((p) => p.date.slice(0, 4)));
@@ -806,6 +1036,7 @@ function EquityChart({ points, width = 900, height = 220, profitTarget = null, m
   });
 
   return (
+    <div ref={wrapRef}>
     <svg
       ref={svgRef}
       viewBox={`0 0 ${width} ${height}`}
@@ -817,18 +1048,18 @@ function EquityChart({ points, width = 900, height = 220, profitTarget = null, m
       onMouseLeave={handleMouseLeave}
     >
       <defs>
-        <linearGradient id="equityFill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={lineColor} stopOpacity="0.42" />
-          <stop offset="55%" stopColor={lineColor} stopOpacity="0.12" />
-          <stop offset="100%" stopColor={lineColor} stopOpacity="0.02" />
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={lineColor} stopOpacity={onInk ? "0.38" : "0.30"} />
+          <stop offset="60%" stopColor={lineColor} stopOpacity={onInk ? "0.10" : "0.08"} />
+          <stop offset="100%" stopColor={lineColor} stopOpacity="0" />
         </linearGradient>
       </defs>
 
       {/* $ scale with horizontal gridlines — on the right */}
       {yTicks.map((v, i) => (
         <g key={i}>
-          <line x1="0" y1={yAt(v)} x2={width - padRight} y2={yAt(v)} stroke={axisColor || COLORS.border} strokeWidth="1" strokeDasharray="2 4" opacity="0.8" />
-          <text x={width - padRight + 8} y={yAt(v) + 3.5} textAnchor="start" fontSize="10.5" fill={axisColor || COLORS.textMuted}>
+          <line x1="0" y1={yAt(v)} x2={width - padRight} y2={yAt(v)} stroke={axisColor || C.border} strokeWidth="1" strokeDasharray="2 5" />
+          <text x={width - padRight + 10} y={yAt(v) + 3.5} textAnchor="start" fontSize="10.5" fontWeight="600" fill={axisColor || C.textMuted} style={{ fontVariantNumeric: "tabular-nums" }}>
             {fmtAxis(v)}
           </text>
         </g>
@@ -836,8 +1067,8 @@ function EquityChart({ points, width = 900, height = 220, profitTarget = null, m
 
       {profitTarget !== null && !Number.isNaN(profitTarget) && (
         <>
-          <line x1="0" y1={yAt(profitTarget)} x2={width - padRight} y2={yAt(profitTarget)} stroke={profitColor || COLORS.win} strokeWidth="1.5" strokeDasharray="6 4" />
-          <text x={width - padRight - 4} y={yAt(profitTarget) - 5} textAnchor="end" fontSize="11" fontWeight="700" fill={profitColor || COLORS.win}>
+          <line x1="0" y1={yAt(profitTarget)} x2={width - padRight} y2={yAt(profitTarget)} stroke={profitColor || C.win} strokeWidth="1.5" strokeDasharray="6 4" />
+          <text x={width - padRight - 4} y={yAt(profitTarget) - 6} textAnchor="end" fontSize="11" fontWeight="700" fill={profitColor || C.win}>
             Profit target {fmtMoney(profitTarget)}
           </text>
         </>
@@ -849,37 +1080,43 @@ function EquityChart({ points, width = 900, height = 220, profitTarget = null, m
         const lastPt = minBalPts[minBalPts.length - 1];
         return (
           <>
-            <path d={minBalPath} fill="none" stroke={minBalanceColor || COLORS.loss} strokeWidth="1.5" strokeDasharray="6 4" />
-            <text x={width - padRight - 4} y={yAt(lastPt.v) + 18} textAnchor="end" fontSize="11" fontWeight="700" fill={minBalanceColor || COLORS.loss}>
+            <path d={minBalPath} fill="none" stroke={minBalanceColor || C.loss} strokeWidth="1.5" strokeDasharray="6 4" />
+            {/* Label sits on whichever side of the line the curve's end isn't, so it never collides with the endpoint dot. */}
+            <text x={width - padRight - 12} y={yAt(last.balance) > yAt(lastPt.v) ? yAt(lastPt.v) - 6 : yAt(lastPt.v) + 16} textAnchor="end" fontSize="11" fontWeight="700" fill={minBalanceColor || C.loss}>
               Minimum balance {fmtMoney(lastPt.v)}
             </text>
           </>
         );
       })()}
 
-      <path d={areaPath} fill="url(#equityFill)" stroke="none" />
-      <path d={linePath} fill="none" stroke={lineColor} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" filter={`drop-shadow(0 2px 5px ${lineColor}55)`} />
-      <circle cx={xAt(points.length - 1)} cy={yAt(last.balance)} r="5" fill={lineColor} stroke={COLORS.card} strokeWidth="2" />
+      <path key={`area-${animateKey}`} className={animate ? "curve-fade" : undefined} d={areaPath} fill={`url(#${gradId})`} stroke="none" />
+      <path
+        key={`line-${animateKey}`}
+        className={animate ? "curve-draw" : undefined}
+        pathLength={animate ? 1 : undefined}
+        d={linePath} fill="none" stroke={lineColor} strokeWidth={onInk ? 2.75 : 2.5} strokeLinejoin="round" strokeLinecap="round"
+        filter={`drop-shadow(0 ${onInk ? 0 : 2}px ${onInk ? 8 : 5}px ${lineColor}${onInk ? "99" : "55"})`}
+      />
+      <circle key={`end-${animateKey}`} className={animate ? "curve-fade" : undefined} cx={xAt(points.length - 1)} cy={yAt(last.balance)} r="5" fill={lineColor} stroke={C.dotRing} strokeWidth="2.5" />
 
       {/* Payout markers — a small dot on every point where a payout happened */}
       {points.map((p, i) => {
         if (!p.payoutTotal) return null;
         return (
-          <circle key={`payout-${i}`} cx={xAt(i)} cy={yAt(p.balance)} r="5" fill={payoutColor || COLORS.payout} stroke={COLORS.card} strokeWidth="1.5">
+          <circle key={`payout-${i}`} cx={xAt(i)} cy={yAt(p.balance)} r="5" fill={payoutColor || C.payout} stroke={C.dotRing} strokeWidth="1.5">
             <title>{`Payout: ${fmtMoney(p.payoutTotal)}`}</title>
           </circle>
         );
       })}
 
       {/* x-axis */}
-      <line x1="0" y1={height - padBottom + 10} x2={width - padRight} y2={height - padBottom + 10} stroke={axisColor || COLORS.border} strokeWidth="1" />
+      <line x1="0" y1={height - padBottom + 10} x2={width - padRight} y2={height - padBottom + 10} stroke={axisColor || C.border} strokeWidth="1" />
       {tickIdxs.map((i) => {
         const anchor = i === 0 ? "start" : i === dedupedPoints.length - 1 ? "end" : "middle";
         const tx = xAt(i);
         return (
           <g key={i}>
-            <line x1={tx} y1={height - padBottom + 10} x2={tx} y2={height - padBottom + 14} stroke={axisColor || COLORS.border} strokeWidth="1" />
-            <text x={tx} y={height - 8} textAnchor={anchor} fontSize="10.5" fontWeight="500" fill={axisColor || COLORS.textMuted}>
+            <text x={tx} y={height - 8} textAnchor={anchor} fontSize="10.5" fontWeight="600" fill={axisColor || C.textMuted}>
               {fmtTick(dedupedPoints[i].date)}
             </text>
           </g>
@@ -899,24 +1136,24 @@ function EquityChart({ points, width = 900, height = 220, profitTarget = null, m
         const boxY = Math.min(Math.max(hy - boxH - 10, padTop), height - padBottom - boxH);
         return (
           <g pointerEvents="none">
-            <line x1={hx} y1={padTop} x2={hx} y2={height - padBottom + 10} stroke={COLORS.textMuted} strokeWidth="1" strokeDasharray="3 3" opacity="0.6" />
-            <circle cx={hx} cy={hy} r="5" fill={lineColor} stroke={COLORS.card} strokeWidth="2" />
-            <rect x={boxX} y={boxY} width={boxW} height={boxH} rx="11" fill={COLORS.card} stroke={COLORS.border} strokeWidth="1" filter="drop-shadow(0 4px 10px rgba(20,20,35,0.16))" />
+            <line x1={hx} y1={padTop} x2={hx} y2={height - padBottom + 10} stroke={C.textMuted} strokeWidth="1" strokeDasharray="3 3" opacity="0.6" />
+            <circle cx={hx} cy={hy} r="5" fill={lineColor} stroke={C.dotRing} strokeWidth="2" />
+            <rect x={boxX} y={boxY} width={boxW} height={boxH} rx="11" fill={C.card} stroke={C.tooltipBorder} strokeWidth="1" filter={`drop-shadow(0 6px 14px rgba(15,10,40,${onInk ? 0.45 : 0.16}))`} />
             {hoverDateLabel && (
-              <text x={boxX + 10} y={boxY + 15} fontSize="10.5" fontWeight="700" fill={COLORS.text}>
+              <text x={boxX + 11} y={boxY + 16} fontSize="10.5" fontWeight="700" fill={C.textMuted}>
                 {hoverDateLabel}
               </text>
             )}
-            <text x={boxX + 10} y={boxY + 33} fontSize="11" fontWeight="700" fill={COLORS.textMuted}>
-              Balance: {fmtMoney(hp.balance)}
+            <text x={boxX + 11} y={boxY + 34} fontSize="12" fontWeight="800" fill={C.text} style={{ fontVariantNumeric: "tabular-nums" }}>
+              {fmtMoney(hp.balance)}
             </text>
             {hasMaxLoss && (
-              <text x={boxX + 10} y={boxY + 50} fontSize="11" fontWeight="700" fill={COLORS.textMuted}>
+              <text x={boxX + 11} y={boxY + 51} fontSize="11" fontWeight="700" fill={C.textMuted}>
                 Minimum balance: {fmtMoney(hp.minBalance)}
               </text>
             )}
             {hasPayout && (
-              <text x={boxX + 10} y={boxY + (hasMaxLoss ? 67 : 50)} fontSize="11" fontWeight="700" fill={payoutColor || COLORS.payout}>
+              <text x={boxX + 11} y={boxY + (hasMaxLoss ? 68 : 51)} fontSize="11" fontWeight="700" fill={payoutColor || C.payout}>
                 Payout: {fmtMoney(hp.payoutTotal)}
               </text>
             )}
@@ -924,19 +1161,22 @@ function EquityChart({ points, width = 900, height = 220, profitTarget = null, m
         );
       })()}
     </svg>
+    </div>
   );
 }
 
 // A single red line/area showing running drawdown from peak (always <= 0),
 // with the same hover-crosshair-and-tooltip interaction as EquityChart, but
 // simplified — no target lines, just date + drawdown value.
-function DrawdownChart({ points, width = 640, height = 220 }) {
+function DrawdownChart({ points, width: fallbackWidth = 640, height = 220 }) {
   const svgRef = useRef(null);
   const [hoverIdx, setHoverIdx] = useState(null);
+  const [wrapRef, measuredWidth] = useMeasuredWidth();
+  const width = measuredWidth || fallbackWidth;
 
   if (!points || points.length < 2) {
     return (
-      <div style={{ height, display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.textMuted, fontSize: 13 }}>
+      <div ref={wrapRef} style={{ height, display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.textMuted, fontSize: 13 }}>
         Log trades to see your drawdown.
       </div>
     );
@@ -992,6 +1232,7 @@ function DrawdownChart({ points, width = 640, height = 220 }) {
   for (let i = 0; i < points.length; i += step) tickIdxs.push(i);
 
   return (
+    <div ref={wrapRef}>
     <svg
       ref={svgRef}
       viewBox={`0 0 ${width} ${height}`}
@@ -1061,6 +1302,7 @@ function DrawdownChart({ points, width = 640, height = 220 }) {
         );
       })()}
     </svg>
+    </div>
   );
 }
 
@@ -1103,13 +1345,13 @@ function InsightCard({ tone, title, body }) {
     <div
       style={{
         background: COLORS.card, border: `1px solid ${COLORS.border}`, borderLeft: `3px solid ${toneColor}`,
-        borderRadius: 14, padding: "16px 18px", boxShadow: "0 1px 2px rgba(23,21,51,0.04)",
+        borderRadius: 14, padding: "16px 18px", boxShadow: COLORS.shadow,
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
         <span style={{
-          fontSize: 10, fontWeight: 700, color: toneColor, textTransform: "uppercase", letterSpacing: "0.04em",
-          background: toneColor + "1E", borderRadius: 6, padding: "2px 7px",
+          fontSize: 11, fontWeight: 700, color: toneColor,
+          background: toneColor + "1E", borderRadius: 999, padding: "2px 8px",
         }}>
           {toneLabel}
         </span>
@@ -1429,8 +1671,8 @@ function DraggablePopup({ title, onClose, children, defaultX, defaultY, width = 
 function inputStyle_() {
   return {
     background: COLORS.card,
-    border: `1.5px solid ${COLORS.border}`,
-    borderRadius: 9,
+    border: `1.5px solid ${COLORS.borderStrong}`,
+    borderRadius: 10,
     padding: "9px 12px",
     color: COLORS.text,
     fontSize: 14,
@@ -1443,27 +1685,32 @@ function primaryBtnStyle_() {
     background: COLORS.accent,
     color: "#fff",
     border: "none",
-    borderRadius: 9,
+    borderRadius: 10,
     padding: "10px 18px",
     fontSize: 14,
-    fontWeight: 600,
+    fontWeight: 700,
     cursor: "pointer",
     justifySelf: "start",
-    boxShadow: "0 2px 6px rgba(124,92,252,0.35)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.18), 0 6px 16px -6px rgba(108,79,224,0.65)",
   };
 }
 
 function ghostBtnStyle_() {
   return {
     background: COLORS.card,
-    border: `1.5px solid ${COLORS.border}`,
-    color: COLORS.textMuted,
-    borderRadius: 8,
+    border: `1.5px solid ${COLORS.borderStrong}`,
+    color: COLORS.text,
+    borderRadius: 9,
     padding: "6px 12px",
     fontSize: 12.5,
-    fontWeight: 500,
+    fontWeight: 600,
     cursor: "pointer",
   };
+}
+
+// Section headings inside a tab ("Friends", "Trading insights", …).
+function sectionTitleStyle_(overrides) {
+  return { fontSize: 15, fontWeight: 700, color: COLORS.text, marginBottom: 12, letterSpacing: "-0.005em", ...overrides };
 }
 
 function deleteBtnStyle_() {
@@ -1516,20 +1763,12 @@ function AuthScreen() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", alignItems: "center", justifyContent: "center", gap: 28, background: COLORS.bg, fontFamily: "'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-        <div style={{
-          width: 72, height: 72, borderRadius: 20,
-          background: `linear-gradient(135deg, ${COLORS.accent}, #6D28D9)`,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 32, fontWeight: 800, color: "#fff", letterSpacing: "-0.02em",
-          boxShadow: "0 10px 28px rgba(124,92,252,0.4)",
-        }}>
-          A+
-        </div>
-        <div style={{ fontSize: 32, fontWeight: 700, color: COLORS.text, letterSpacing: "-0.02em" }}>Trades</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+        <BrandMark size={64} />
+        <div className="display" style={{ fontSize: 38, fontWeight: 800, color: COLORS.text }}>Trades</div>
       </div>
-      <form onSubmit={submit} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 32, width: "100%", maxWidth: 380, display: "grid", gap: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
-        <div style={{ fontSize: 13, color: COLORS.textMuted }}>{mode === "signup" ? "Create your account" : "Log in to your account"}</div>
+      <form onSubmit={submit} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 20, padding: 32, width: "calc(100% - 32px)", maxWidth: 380, display: "grid", gap: 16, boxShadow: COLORS.shadow }}>
+        <div className="display" style={{ fontSize: 22, fontWeight: 700, color: COLORS.text }}>{mode === "signup" ? "Create your account" : "Log in"}</div>
         {mode === "signup" && (
           <Field label="Nickname (shown to friends)">
             <input type="text" value={nickname} onChange={(e) => setNickname(e.target.value)} placeholder="e.g. Jerry Smith" style={inputStyle_()} autoComplete="nickname" />
@@ -1576,8 +1815,11 @@ function Paywall({ status, onLogout, onSubscribe, checkoutBusy, checkoutError })
     "Your free trial has ended.";
   return (
     <div style={{ display: "flex", minHeight: "100vh", alignItems: "center", justifyContent: "center", background: COLORS.bg, fontFamily: "'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif" }}>
-      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 32, width: "100%", maxWidth: 420, display: "grid", gap: 16, textAlign: "center", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
-        <div style={{ fontSize: 20, fontWeight: 700, color: COLORS.text }}>A+ Trades</div>
+      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 20, padding: 32, width: "calc(100% - 32px)", maxWidth: 420, display: "grid", gap: 16, textAlign: "center", boxShadow: COLORS.shadow }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+          <BrandMark size={40} />
+          <div className="display" style={{ fontSize: 24, fontWeight: 800, color: COLORS.text }}>Trades</div>
+        </div>
         <div style={{ fontSize: 14, color: COLORS.textMuted }}>{label} Subscribe to keep using A+ Trades.</div>
         {checkoutError && (
           <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>{checkoutError}</div>
@@ -1639,9 +1881,11 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
   const now = new Date();
   const [calMonth, setCalMonth] = useState(now.getMonth());
   const [calYear, setCalYear] = useState(now.getFullYear());
-  const [perfRangeStart, setPerfRangeStart] = useState("");
+  // Growth-curve range — defaults to the past 30 days. Shared by the
+  // dashboard toggle and the Performance tab; "" quickRange = custom dates.
+  const [perfRangeStart, setPerfRangeStart] = useState(() => daysAgoStr(CURVE_RANGES.find((r) => r.key === DEFAULT_CURVE_RANGE).days));
   const [perfRangeEnd, setPerfRangeEnd] = useState("");
-  const [quickRange, setQuickRange] = useState("");
+  const [quickRange, setQuickRange] = useState(DEFAULT_CURVE_RANGE);
   const [selectedDay, setSelectedDay] = useState(null);
   const [mediaModalTradeId, setMediaModalTradeId] = useState(null);
   const [viewTradeId, setViewTradeId] = useState(null);
@@ -3274,20 +3518,19 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
     d.setDate(d.getDate() - 1);
     return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
   }
+  // preset is a CURVE_RANGES key ("1w" | "30d" | "6m" | "1y" | "all"), or ""
+  // when the user has typed custom From/To dates.
   function applyQuickRange(preset) {
     setQuickRange(preset);
     if (!preset) return;
-    const end = new Date();
-    const start = new Date();
-    if (preset === "1d") start.setDate(end.getDate() - 1);
-    else if (preset === "1w") start.setDate(end.getDate() - 7);
-    else if (preset === "2w") start.setDate(end.getDate() - 14);
-    else if (preset === "1m") start.setMonth(end.getMonth() - 1);
-    else if (preset === "6m") start.setMonth(end.getMonth() - 6);
-    else if (preset === "1y") start.setFullYear(end.getFullYear() - 1);
-    const fmtLocal = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-    setPerfRangeStart(fmtLocal(start));
-    setPerfRangeEnd(fmtLocal(end));
+    const range = CURVE_RANGES.find((r) => r.key === preset);
+    if (!range || range.days === null) {
+      setPerfRangeStart("");
+      setPerfRangeEnd("");
+      return;
+    }
+    setPerfRangeStart(daysAgoStr(range.days));
+    setPerfRangeEnd("");
   }
   const chronoTradesAll = [...trades].sort((a, b) => (a.date > b.date ? 1 : a.date < b.date ? -1 : 0));
   const chronoTrades = chronoTradesAll.filter((t) => {
@@ -3295,40 +3538,65 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
     if (perfRangeEnd && t.date > perfRangeEnd) return false;
     return true;
   });
-  const dayStart = perfRangeStart || (chronoTrades[0] ? chronoTrades[0].date : null);
-  const dayEnd = perfRangeEnd || (chronoTrades.length ? chronoTrades[chronoTrades.length - 1].date : null);
   const maxLossNumForCurve = targets.maxLoss === "" ? null : Number(targets.maxLoss);
   function isWeekend(dateStr) {
     const wd = new Date(dateStr + "T00:00:00").getDay();
     return wd === 0 || wd === 6;
   }
-  const equityCurve = [];
-  if (dayStart && dayEnd) {
+  // The account curve is always built over ALL trades, so every point is a
+  // true account balance (and the trailing minimum-balance floor tracks the
+  // true all-time peak). The selected range only decides which slice of it
+  // is drawn — a 30-day view starts at the real balance 30 days ago, not $0.
+  // It runs through today (flat since the last trade) so a quiet stretch
+  // still shows up in a recent range instead of an empty chart.
+  const equityCurveAll = [];
+  if (chronoTradesAll.length) {
+    const curveStart = chronoTradesAll[0].date;
+    const lastTradeDate = chronoTradesAll[chronoTradesAll.length - 1].date;
+    const todayLocal = localDateStr(new Date());
+    const curveEnd = lastTradeDate > todayLocal ? lastTradeDate : todayLocal;
     const dayPnl = {};
     const dayPayout = {};
-    chronoTrades.forEach((t) => {
+    chronoTradesAll.forEach((t) => {
       dayPnl[t.date] = (dayPnl[t.date] || 0) + t.pnl;
       if (t.entryType === "payout") dayPayout[t.date] = (dayPayout[t.date] || 0) + t.pnl;
     });
-    equityCurve.push({ date: prevDay(dayStart), balance: 0, minBalance: null, payoutTotal: 0 });
+    equityCurveAll.push({ date: prevDay(curveStart), balance: 0, minBalance: null, payoutTotal: 0 });
     let running = 0;
     let peakToDate = 0;
-    let cur = dayStart;
+    let cur = curveStart;
     let guard = 0;
-    while (cur <= dayEnd && guard < 5000) {
+    while (cur <= curveEnd && guard < 5000) {
       running += dayPnl[cur] || 0;
       peakToDate = Math.max(peakToDate, running);
       if (!isWeekend(cur) || dayPnl[cur] !== undefined) {
         const minBalance = maxLossNumForCurve !== null ? peakToDate - Math.abs(maxLossNumForCurve) : null;
-        equityCurve.push({ date: cur, balance: running, minBalance, payoutTotal: dayPayout[cur] || 0 });
+        equityCurveAll.push({ date: cur, balance: running, minBalance, payoutTotal: dayPayout[cur] || 0 });
       }
-      if (cur === dayEnd) break;
+      if (cur === curveEnd) break;
       cur = nextDay(cur);
       guard++;
     }
   }
-  const currentBalance = equityCurve.length ? equityCurve[equityCurve.length - 1].balance : 0;
-  const peakBalance = Math.max(0, ...equityCurve.map((p) => p.balance));
+  // Keep the last point before the range as the starting anchor, so the
+  // line begins at the balance the account actually had going in.
+  function sliceCurveToRange(curve) {
+    if (!perfRangeStart && !perfRangeEnd) return curve;
+    const inRange = curve.filter((p) => (!perfRangeStart || p.date >= perfRangeStart) && (!perfRangeEnd || p.date <= perfRangeEnd));
+    let anchor = null;
+    if (perfRangeStart) {
+      for (let i = curve.length - 1; i >= 0; i--) {
+        if (curve[i].date < perfRangeStart) { anchor = curve[i]; break; }
+      }
+    }
+    return anchor ? [anchor, ...inRange] : inRange;
+  }
+  const equityCurve = sliceCurveToRange(equityCurveAll);
+  const currentBalance = equityCurveAll.length ? equityCurveAll[equityCurveAll.length - 1].balance : 0;
+  const peakBalance = Math.max(0, ...equityCurveAll.map((p) => p.balance));
+  // Change in account balance across the drawn range.
+  const rangeChange = equityCurve.length >= 2 ? equityCurve[equityCurve.length - 1].balance - equityCurve[0].balance : 0;
+  const rangePhrase = curveRangePhrase(quickRange);
 
   // ---- Trading Insights (Performance tab) ----
   const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -3359,19 +3627,21 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
   // a payout would otherwise show up as a fake "loss" dip. Recompute a
   // trading-only running balance over the same dates as equityCurve (whose
   // first point is a synthetic "day before start" placeholder at 0).
-  const drawdownCurve = (() => {
+  // Built over all time (peak = true all-time peak), then sliced to the same
+  // range as the growth curve.
+  const drawdownCurve = sliceCurveToRange((() => {
     const dayPnlTradingOnly = {};
-    chronoTrades.forEach((t) => {
+    chronoTradesAll.forEach((t) => {
       if (t.entryType !== "payout") dayPnlTradingOnly[t.date] = (dayPnlTradingOnly[t.date] || 0) + t.pnl;
     });
     let running = 0;
     let peak = 0;
-    return equityCurve.map((p, i) => {
+    return equityCurveAll.map((p, i) => {
       if (i > 0) running += dayPnlTradingOnly[p.date] || 0;
       peak = Math.max(peak, running);
       return { date: p.date, value: running - peak };
     });
-  })();
+  })());
 
   const winningTradesAll = tradingOnly.filter((t) => t.pnl > 0);
   const losingTradesAll = tradingOnly.filter((t) => t.pnl < 0);
@@ -3562,34 +3832,39 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
     <div style={{ display: "flex", minHeight: "100vh", background: COLORS.bg, fontFamily: "'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif", color: COLORS.text }}>
 
       {/* Sidebar */}
-      <div className="sidebar" style={{ width: 220, minWidth: 220, background: COLORS.sidebar, display: "flex", flexDirection: "column", padding: "22px 14px", position: "sticky", top: 0, height: "100vh", gap: 24 }}>
-        <div className="logo-block" style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 8px" }}>
-          <span style={{ color: "#fff", fontWeight: 700, fontSize: 15, letterSpacing: "-0.01em" }}>A+ Trades</span>
+      <div className="sidebar" style={{ width: 228, minWidth: 228, background: COLORS.sidebar, display: "flex", flexDirection: "column", padding: "22px 14px 18px", position: "sticky", top: 0, height: "100vh", gap: 22, boxShadow: "inset -1px 0 0 rgba(255,255,255,0.05)" }}>
+        <div className="logo-block" style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 6px" }}>
+          <BrandMark size={34} />
+          <span className="display" style={{ color: "#fff", fontWeight: 800, fontSize: 19 }}>Trades</span>
         </div>
         <button
           onClick={() => setTab("trades")}
           style={{
             display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-            background: targets.addTradeColor || COLORS.accent, color: "#fff", border: "none", borderRadius: 10,
+            background: targets.addTradeColor || COLORS.accent, color: "#fff", border: "none", borderRadius: 12,
             padding: "12px 14px", fontSize: 14, fontWeight: 700, cursor: "pointer",
-            boxShadow: tab === "trades" ? "0 0 0 2px rgba(255,255,255,0.55), 0 2px 8px rgba(124,92,252,0.45)" : "0 2px 8px rgba(124,92,252,0.45)",
+            boxShadow: tab === "trades"
+              ? "0 0 0 2px rgba(255,255,255,0.55), inset 0 1px 0 rgba(255,255,255,0.2), 0 8px 20px -8px rgba(108,79,224,0.8)"
+              : "inset 0 1px 0 rgba(255,255,255,0.2), 0 8px 20px -8px rgba(108,79,224,0.8)",
           }}
         >
-          <span style={{ fontSize: 17, lineHeight: 1 }}>+</span> Add Trade
+          <span style={{ fontSize: 18, lineHeight: 1, marginTop: -1 }}>+</span> Add Trade
         </button>
-        <nav style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <nav aria-label="Main" style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           {navItems.map(({ key, label, Icon }) => {
             const active = tab === key;
             return (
               <button
                 key={key}
                 onClick={() => setTab(key)}
+                aria-current={active ? "page" : undefined}
                 style={{
-                  display: "flex", alignItems: "center", gap: 10,
+                  display: "flex", alignItems: "center", gap: 11,
                   background: active ? (targets.selectedTabColor || COLORS.sidebarActive) : "transparent",
-                  color: active ? "#fff" : "#9599B0",
+                  color: active ? "#fff" : "#A3A0BD",
                   border: "none", borderRadius: 10, padding: "10px 12px",
                   fontSize: 13.5, fontWeight: 600, cursor: "pointer", textAlign: "left",
+                  boxShadow: active ? "inset 0 1px 0 rgba(255,255,255,0.14), 0 6px 16px -8px rgba(108,79,224,0.9)" : "none",
                 }}
               >
                 <Icon active={active} />
@@ -3599,54 +3874,31 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
           })}
         </nav>
 
-        <button
-          onClick={toggleTheme}
-          style={{
-            marginTop: "auto",
-            display: "flex", alignItems: "center", gap: 8,
-            background: "rgba(255,255,255,0.06)", color: "#C7CAD6",
-            border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10,
-            padding: "9px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "left",
-          }}
-        >
-          <span style={{ fontSize: 14 }}>{theme === "light" ? "🌙" : "☀️"}</span>
-          {theme === "light" ? "Dark mode" : "Light mode"}
-        </button>
-        <button
-          onClick={() => setTab("feedback")}
-          style={{
-            display: "flex", alignItems: "center", gap: 8,
-            background: tab === "feedback" ? (targets.selectedTabColor || COLORS.sidebarActive) : "rgba(255,255,255,0.06)",
-            color: tab === "feedback" ? "#fff" : "#C7CAD6",
-            border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10,
-            padding: "9px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "left",
-          }}
-        >
-          <span style={{ fontSize: 14 }}>💬</span> Feedback
-        </button>
-        <button
-          onClick={() => setTab("settings")}
-          style={{
-            display: "flex", alignItems: "center", gap: 8,
-            background: tab === "settings" ? (targets.selectedTabColor || COLORS.sidebarActive) : "rgba(255,255,255,0.06)",
-            color: tab === "settings" ? "#fff" : "#C7CAD6",
-            border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10,
-            padding: "9px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "left",
-          }}
-        >
-          <span style={{ fontSize: 14 }}>⚙️</span> Settings
-        </button>
-        <button
-          onClick={onLogout}
-          style={{
-            display: "flex", alignItems: "center", gap: 8,
-            background: "rgba(255,255,255,0.06)", color: "#C7CAD6",
-            border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10,
-            padding: "9px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "left",
-          }}
-        >
-          <span style={{ fontSize: 14 }}>⎋</span> Log out
-        </button>
+        {/* Footer utilities — quiet rows, separated from the main nav by a hairline */}
+        <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: 2, paddingTop: 12, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+          {[
+            { key: "theme", label: theme === "light" ? "Dark mode" : "Light mode", Icon: theme === "light" ? IconMoon : IconSun, onClick: toggleTheme, active: false },
+            { key: "feedback", label: "Feedback", Icon: IconChat, onClick: () => setTab("feedback"), active: tab === "feedback" },
+            { key: "settings", label: "Settings", Icon: IconGear, onClick: () => setTab("settings"), active: tab === "settings" },
+            { key: "logout", label: "Log out", Icon: IconLogout, onClick: onLogout, active: false },
+          ].map(({ key, label, Icon, onClick, active }) => (
+            <button
+              key={key}
+              onClick={onClick}
+              aria-current={active ? "page" : undefined}
+              style={{
+                display: "flex", alignItems: "center", gap: 11,
+                background: active ? (targets.selectedTabColor || COLORS.sidebarActive) : "transparent",
+                color: active ? "#fff" : "#A3A0BD",
+                border: "none", borderRadius: 10,
+                padding: "9px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "left",
+              }}
+            >
+              <Icon active={active} />
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Mobile-only bottom tab bar — hidden on desktop via CSS, shown in place of the sidebar under 780px */}
@@ -3754,7 +4006,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                 border: "none", borderRadius: 10, padding: "12px 14px", fontSize: 14, fontWeight: 600, cursor: "pointer", textAlign: "left",
               }}
             >
-              <span style={{ fontSize: 16 }}>💬</span> Feedback
+              <IconChat active={tab === "feedback"} /> Feedback
             </button>
             <button
               onClick={() => { setTab("settings"); setMobileMoreOpen(false); }}
@@ -3765,32 +4017,32 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                 border: "none", borderRadius: 10, padding: "12px 14px", fontSize: 14, fontWeight: 600, cursor: "pointer", textAlign: "left",
               }}
             >
-              <span style={{ fontSize: 16 }}>⚙️</span> Settings
+              <IconGear active={tab === "settings"} /> Settings
             </button>
             <button
               onClick={toggleTheme}
               style={{ display: "flex", alignItems: "center", gap: 10, background: "transparent", color: "#C7CAD6", border: "none", borderRadius: 10, padding: "12px 14px", fontSize: 14, fontWeight: 600, cursor: "pointer", textAlign: "left" }}
             >
-              <span style={{ fontSize: 16 }}>{theme === "light" ? "🌙" : "☀️"}</span> {theme === "light" ? "Dark mode" : "Light mode"}
+              {theme === "light" ? <IconMoon active={false} /> : <IconSun active={false} />} {theme === "light" ? "Dark mode" : "Light mode"}
             </button>
             <button
               onClick={onLogout}
               style={{ display: "flex", alignItems: "center", gap: 10, background: "transparent", color: "#C7CAD6", border: "none", borderRadius: 10, padding: "12px 14px", fontSize: 14, fontWeight: 600, cursor: "pointer", textAlign: "left" }}
             >
-              <span style={{ fontSize: 16 }}>⎋</span> Log out
+              <IconLogout active={false} /> Log out
             </button>
           </div>
         </div>
       )}
 
       {/* Main content */}
-      <div className="main-content" style={{ flex: 1, padding: "28px 32px 60px", width: "100%" }}>
-        <header style={{ marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+      <div className="main-content" style={{ flex: 1, padding: "30px 36px 64px", width: "100%", minWidth: 0 }}>
+        <header style={{ marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 12, flexWrap: "wrap" }}>
           <div>
-            <h1 style={{ fontSize: 24, margin: 0, fontWeight: 700, letterSpacing: "-0.01em" }}>
+            <h1 className="display page-title" style={{ fontSize: 32, margin: 0, fontWeight: 800, lineHeight: 1.1 }}>
               {tab === "dashboard" ? "Dashboard" : tab === "trades" ? "Add Trade" : tab === "media" ? "Trades" : tab === "calendar" ? "Performance" : tab === "patterns" ? "Patterns" : tab === "insights" ? "Insights" : tab === "friends" ? "Friends" : tab === "leaderboard" ? "Leaderboard" : tab === "feedback" ? "Feedback" : tab === "settings" ? "Settings" : "Journal"}
             </h1>
-            <div style={{ fontSize: 13, color: COLORS.textMuted, marginTop: 2 }}>
+            <div style={{ fontSize: 13.5, color: COLORS.textMuted, marginTop: 6 }}>
               {tab === "dashboard" ? "Your performance and your friends'" : tab === "trades" ? "Log and review every trade" : tab === "media" ? "Every photo and video, across every trade" : tab === "calendar" ? "Account growth and daily/weekly P&L" : tab === "patterns" ? "" : tab === "insights" ? "What your data says you should do next" : tab === "friends" ? "See each other's trades" : tab === "leaderboard" ? "See how you rank, opt-in only" : tab === "feedback" ? "Tell us what to build next" : tab === "settings" ? "Targets and appearance" : "Track how you felt and why"}
             </div>
           </div>
@@ -3811,107 +4063,131 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
 
         {tab === "dashboard" ? (
           <>
-            <div style={{
-              background: targets.welcomeBannerColor || `linear-gradient(135deg, ${COLORS.accent}, ${COLORS.sidebarActive})`,
-              borderRadius: 16, padding: "24px 28px", marginBottom: 24,
-              boxShadow: "0 8px 24px rgba(124,92,252,0.35)",
-              position: "relative", overflow: "hidden", textAlign: "center",
-            }}>
-              <div style={{ position: "absolute", top: -30, right: -30, width: 140, height: 140, borderRadius: "50%", background: "rgba(255,255,255,0.08)" }} />
-              <div style={{ position: "relative", fontSize: 23, fontWeight: 700, color: "#fff", letterSpacing: "-0.01em" }}>
-                {nickname ? `Welcome, ${nickname} 👋` : "Welcome back 👋"}
+            {/* Growth panel — the dashboard's centrepiece. Same ink as the
+                sidebar; the curve is the only bright thing in it. */}
+            <section
+              className="growth-hero"
+              aria-label="Account growth"
+              style={{
+                background: targets.welcomeBannerColor || COLORS.ink,
+                borderRadius: 22, padding: "24px 26px 12px", marginBottom: 16,
+                boxShadow: theme === "dark" ? "inset 0 0 0 1px rgba(150,131,255,0.16)" : "0 22px 44px -26px rgba(23,20,46,0.7)",
+                color: INK_UI.text,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: INK_UI.text, opacity: 0.92 }}>
+                    {nickname ? `Welcome back, ${nickname}` : "Welcome back"}
+                  </div>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, color: INK_UI.textMuted, marginTop: 16 }}>Account size</div>
+                  <div className="display growth-hero-balance" style={{ fontSize: 48, fontWeight: 700, lineHeight: 1.04, marginTop: 2, color: currentBalance < 0 ? INK_UI.loss : INK_UI.text }}>
+                    {fmtMoney(currentBalance)}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, fontSize: 13, fontWeight: 600, color: INK_UI.textMuted, flexWrap: "wrap" }}>
+                    <span
+                      className="mono"
+                      style={{
+                        fontWeight: 800, borderRadius: 999, padding: "3px 10px",
+                        color: rangeChange > 0 ? INK_UI.win : rangeChange < 0 ? INK_UI.loss : INK_UI.text,
+                        background: rangeChange > 0 ? "rgba(75,227,155,0.12)" : rangeChange < 0 ? "rgba(255,122,133,0.12)" : INK_UI.chipBg,
+                      }}
+                    >
+                      {fmtMoney(rangeChange)}
+                    </span>
+                    <span>{rangePhrase}</span>
+                  </div>
+                </div>
+                <CurveRangeToggle
+                  tone="ink"
+                  value={quickRange}
+                  onChange={applyQuickRange}
+                  options={[{ key: "30d", label: "30 days" }, { key: "all", label: "All time" }]}
+                />
               </div>
-              <div style={{ position: "relative", fontSize: 13.5, color: "rgba(255,255,255,0.85)", marginTop: 4 }}>
-                Here's how you're performing.
-              </div>
-            </div>
-
-            <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
-              <StatCard label="Total payouts" value={`$${totalPayouts.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} />
-              <StatCard label="Account size" value={fmtMoney(currentBalance)} color={currentBalance >= 0 ? COLORS.win : COLORS.loss} />
-              <StatCard label="Your total P&L" value={fmtMoney(totalPnl)} color={totalPnl >= 0 ? COLORS.win : COLORS.loss} />
-              <StatCard label="Your win rate" value={`${winRate}%`} />
-            </div>
-
-            <div className="dashboard-hero" style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 12, marginBottom: 20, alignItems: "stretch" }}>
-              <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
-                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Account growth</div>
+              <div style={{ marginTop: 18 }}>
+                {/* The stock target colors are tuned for white cards; on the ink panel
+                    swap in brighter equivalents unless the user picked their own. */}
                 <EquityChart
+                  tone="ink"
+                  animate
+                  animateKey={`${perfRangeStart}|${perfRangeEnd}`}
                   points={equityCurve}
-                  height={200}
+                  fitToData={!!(perfRangeStart || perfRangeEnd)}
+                  height={230}
                   profitTarget={profitTargetNum}
                   maxLossLevel={maxLossLevel}
                   axisStep={targets.axisStep === "" ? null : Number(targets.axisStep)}
                   growthColor={targets.growthColor || null}
-                  profitColor={targets.profitColor || COLORS.win}
-                  minBalanceColor={targets.minBalanceColor || COLORS.loss}
-                  axisColor={targets.axisColor || null}
+                  profitColor={targets.profitColor && targets.profitColor !== "#16A34A" ? targets.profitColor : INK_UI.win}
+                  minBalanceColor={targets.minBalanceColor && targets.minBalanceColor !== "#E23D45" ? targets.minBalanceColor : INK_UI.loss}
+                  axisColor={null}
                   payoutColor={targets.calPayoutColor || null}
+                  emptyText={chronoTradesAll.length ? "No trading days in this range yet." : "Log your first trade to start your growth curve."}
                 />
               </div>
+            </section>
 
-              <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, boxShadow: "0 1px 2px rgba(23,21,51,0.04)", display: "flex", flexDirection: "column" }}>
-                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 14 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700 }}>This week</div>
-                  <div style={{ fontSize: 11.5, color: COLORS.textMuted }}>{weekDigest.rangeLabel}</div>
+            <StatStrip columns={3} style={{ marginBottom: 16 }}>
+              <StatCard label="Total P&L" value={fmtMoney(totalPnl)} color={totalPnl >= 0 ? COLORS.win : COLORS.loss} />
+              <StatCard label="Win rate" value={`${winRate}%`} />
+              <StatCard label="Total payouts" value={`$${totalPayouts.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} color={totalPayouts > 0 ? COLORS.payout : undefined} />
+            </StatStrip>
+
+            <div className="dashboard-hero" style={{ display: "grid", gridTemplateColumns: "1.25fr 1fr", gap: 16, marginBottom: 32, alignItems: "stretch" }}>
+              <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 18, padding: "18px 20px", boxShadow: COLORS.shadow, display: "flex", flexDirection: "column" }}>
+                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 14, gap: 10 }}>
+                  <div style={sectionTitleStyle_({ marginBottom: 0 })}>This week</div>
+                  <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600 }}>{weekDigest.rangeLabel}</div>
                 </div>
                 {weekDigest.count === 0 ? (
                   <div style={{ flex: 1, display: "flex", alignItems: "center" }}>
-                    <EmptyState text="No trades logged this week yet." />
+                    <div style={{ width: "100%" }}><EmptyState text="No trades logged this week yet." /></div>
                   </div>
                 ) : (
-                  <div style={{ display: "grid", gap: 10 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                      <span style={{ fontSize: 12, color: COLORS.textMuted }}>P&L</span>
-                      <span className="mono" style={{ fontSize: 18, fontWeight: 700, color: weekDigest.total >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(weekDigest.total)}</span>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                      <span style={{ fontSize: 12, color: COLORS.textMuted }}>Win rate</span>
-                      <span className="mono" style={{ fontSize: 13, fontWeight: 700 }}>{weekDigest.winRateWk}%</span>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                      <span style={{ fontSize: 12, color: COLORS.textMuted }}>Trades</span>
-                      <span className="mono" style={{ fontSize: 13, fontWeight: 700 }}>{weekDigest.count}</span>
-                    </div>
-                    {weekDigest.best && (
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                        <span style={{ fontSize: 12, color: COLORS.textMuted }}>Best trade</span>
-                        <span className="mono" style={{ fontSize: 13, fontWeight: 700, color: weekDigest.best.pnl >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(weekDigest.best.pnl)}</span>
+                  <div style={{ display: "grid", gap: 0 }}>
+                    {[
+                      { label: "P&L", value: fmtMoney(weekDigest.total), color: weekDigest.total >= 0 ? COLORS.win : COLORS.loss, big: true },
+                      { label: "Win rate", value: `${weekDigest.winRateWk}%` },
+                      { label: "Trades", value: weekDigest.count },
+                      weekDigest.best ? { label: "Best trade", value: fmtMoney(weekDigest.best.pnl), color: weekDigest.best.pnl >= 0 ? COLORS.win : COLORS.loss } : null,
+                      weekDigest.worst ? { label: "Worst trade", value: fmtMoney(weekDigest.worst.pnl), color: weekDigest.worst.pnl >= 0 ? COLORS.win : COLORS.loss } : null,
+                      weekDigest.adherence !== null ? { label: "Rule adherence", value: `${weekDigest.adherence}%` } : null,
+                    ].filter(Boolean).map((row, i) => (
+                      <div key={row.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "9px 0", borderTop: i === 0 ? "none" : `1px solid ${COLORS.border}` }}>
+                        <span style={{ fontSize: 13, color: COLORS.textMuted, fontWeight: 600 }}>{row.label}</span>
+                        <span className={row.big ? "display" : "mono"} style={{ fontSize: row.big ? 22 : 14, fontWeight: 700, color: row.color || COLORS.text }}>{row.value}</span>
                       </div>
-                    )}
-                    {weekDigest.worst && (
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                        <span style={{ fontSize: 12, color: COLORS.textMuted }}>Worst trade</span>
-                        <span className="mono" style={{ fontSize: 13, fontWeight: 700, color: weekDigest.worst.pnl >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(weekDigest.worst.pnl)}</span>
-                      </div>
-                    )}
-                    {weekDigest.adherence !== null && (
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                        <span style={{ fontSize: 12, color: COLORS.textMuted }}>Rule adherence</span>
-                        <span className="mono" style={{ fontSize: 13, fontWeight: 700 }}>{weekDigest.adherence}%</span>
-                      </div>
-                    )}
+                    ))}
                   </div>
                 )}
               </div>
+
+              <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 18, padding: "18px 20px", boxShadow: COLORS.shadow, display: "flex", flexDirection: "column", gap: 4 }}>
+                <div style={sectionTitleStyle_({ marginBottom: 10 })}>What's working</div>
+                <div style={{ padding: "10px 0" }}>
+                  <div style={{ fontSize: 13, color: COLORS.textMuted, fontWeight: 600, marginBottom: 4 }}>Best state of mind</div>
+                  {bestPattern ? (
+                    <div className="display" style={{ fontSize: 22, fontWeight: 700, color: COLORS.win }}>{bestPattern.label}</div>
+                  ) : (
+                    <div style={{ fontSize: 13.5, color: COLORS.textMuted }}>Link journal entries to trades to see this.</div>
+                  )}
+                </div>
+                <div style={{ padding: "12px 0 4px", borderTop: `1px solid ${COLORS.border}` }}>
+                  <div style={{ fontSize: 13, color: COLORS.textMuted, fontWeight: 600, marginBottom: 4 }}>Best pattern</div>
+                  {bestConfluencePattern ? (
+                    <div className="display" style={{ fontSize: 22, fontWeight: 700, color: COLORS.win, overflowWrap: "anywhere" }}>
+                      <span style={{ color: COLORS.textMuted, fontWeight: 600 }}>#{bestConfluencePattern.number} </span>
+                      {bestConfluencePattern.name || bestConfluencePattern.label}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 13.5, color: COLORS.textMuted }}>Tag trades with confluences to see this.</div>
+                  )}
+                </div>
+              </div>
             </div>
 
-            <div style={{ fontSize: 11.5, fontWeight: 700, color: COLORS.textMuted, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>More stats</div>
-            <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, marginBottom: 24 }}>
-              <StatCard label="Best state of mind" value={bestPattern ? bestPattern.label : "—"} color={bestPattern ? COLORS.win : undefined} />
-              <StatCard
-                label="Best pattern"
-                value={bestConfluencePattern ? (
-                  <>
-                    <span style={{ color: COLORS.textMuted, fontWeight: 500 }}>#{bestConfluencePattern.number} </span>
-                    {bestConfluencePattern.name || bestConfluencePattern.label}
-                  </>
-                ) : "—"}
-                color={bestConfluencePattern ? COLORS.win : undefined}
-              />
-            </div>
-
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Friends</div>
+            <div style={sectionTitleStyle_()}>Friends</div>
             {acceptedFriends.length === 0 ? (
               <EmptyState text="Add a friend (in the Friends tab) to see their performance here." />
             ) : (
@@ -3921,7 +4197,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                   const label = (f.otherProfile && (f.otherProfile.display_name || f.otherProfile.email)) || "Unknown";
                   const friendAccounts = f.otherProfile ? formatAccounts(f.otherProfile.account_count, f.otherProfile.account_size) : null;
                   return (
-                    <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                    <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", boxShadow: COLORS.shadow }}>
                       <div style={{ fontSize: 14, fontWeight: 700 }}>{label}</div>
                       {stats ? (
                         <div className="mono" style={{ display: "flex", alignItems: "center", gap: 20, fontSize: 13, flexWrap: "wrap" }}>
@@ -3942,7 +4218,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
           </>
         ) : tab === "trades" ? (
           <>
-            <form onSubmit={addTrade} style={{ position: "relative", background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+            <form onSubmit={addTrade} style={{ position: "relative", background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: COLORS.shadow }}>
               <button
                 type="button"
                 onClick={() => setAccountsPopoverOpen((o) => !o)}
@@ -4240,7 +4516,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                   else { setSortKey(key); setSortDir("desc"); }
                 }
                 return (
-                  <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, overflow: "hidden", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                  <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, overflow: "hidden", boxShadow: COLORS.shadow }}>
                     <div style={{ overflowX: "auto" }}>
                       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                         <thead>
@@ -4345,74 +4621,68 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
           </>
         ) : tab === "calendar" ? (
           <>
-            <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 20 }}>
+            <StatStrip columns={5} style={{ marginBottom: 16 }}>
               <StatCard label="Total P&L" value={fmtMoney(totalPnl)} color={totalPnl >= 0 ? COLORS.win : COLORS.loss} />
               <StatCard label="Win rate" value={`${winRate}%`} />
               <StatCard label="Profit factor" value={profitFactor === Infinity ? "∞" : profitFactor.toFixed(2)} />
               <StatCard label="Avg duration" value={fmtDuration(avgDuration)} />
               <StatCard label="Avg R:R" value={avgRR === null ? "—" : avgRR.toFixed(2)} />
-            </div>
+            </StatStrip>
 
-            <div className="perf-top" style={{ marginBottom: 28 }}>
+            <div className="perf-top" style={{ marginBottom: 32 }}>
               {/* Account size / equity */}
               <div
                 style={{
-                  background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16,
-                  padding: 22, boxShadow: "0 1px 2px rgba(23,21,51,0.04)",
-                  minHeight: "calc(50vh - 100px)", display: "flex", flexDirection: "column", justifyContent: "space-between",
+                  background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 20,
+                  padding: "22px 24px 14px", boxShadow: COLORS.shadow,
+                  minHeight: "calc(50vh - 100px)", display: "flex", flexDirection: "column",
                 }}
               >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 16, marginBottom: 8 }}>
-                  <div>
-                    <div style={{ fontSize: 12.5, color: COLORS.textMuted, fontWeight: 600, marginBottom: 4 }}>ACCOUNT SIZE</div>
-                    <div className="mono" style={{ fontSize: 34, fontWeight: 700, color: currentBalance >= 0 ? COLORS.win : COLORS.loss }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 16, marginBottom: 16 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13, color: COLORS.textMuted, fontWeight: 600, marginBottom: 2 }}>Account size</div>
+                    <div className="display" style={{ fontSize: 40, fontWeight: 700, lineHeight: 1.08, color: currentBalance >= 0 ? COLORS.text : COLORS.loss }}>
                       {fmtMoney(currentBalance)}
                     </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 13, fontWeight: 600, color: COLORS.textMuted, flexWrap: "wrap" }}>
+                      <span className="mono" style={{
+                        fontWeight: 800, borderRadius: 999, padding: "3px 10px",
+                        color: rangeChange > 0 ? COLORS.win : rangeChange < 0 ? COLORS.loss : COLORS.text,
+                        background: rangeChange > 0 ? COLORS.winSoft : rangeChange < 0 ? COLORS.lossSoft : COLORS.subtleBg,
+                      }}>
+                        {fmtMoney(rangeChange)}
+                      </span>
+                      <span>{rangePhrase}</span>
+                    </div>
                   </div>
-                  <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: 28, flexWrap: "wrap" }}>
                     <div>
-                      <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>PEAK</div>
-                      <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: COLORS.win }}>{fmtMoney(peakBalance)}</div>
+                      <div style={{ fontSize: 12.5, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>Peak</div>
+                      <div className="mono" style={{ fontSize: 16, fontWeight: 700, color: COLORS.win }}>{fmtMoney(peakBalance)}</div>
                     </div>
                     <div>
-                      <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>TRADES</div>
-                      <div className="mono" style={{ fontSize: 15, fontWeight: 700 }}>{chronoTrades.length}</div>
+                      <div style={{ fontSize: 12.5, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>Trades in range</div>
+                      <div className="mono" style={{ fontSize: 16, fontWeight: 700 }}>{chronoTrades.length}</div>
                     </div>
                   </div>
-                </div>
-                <div style={{ display: "flex", alignItems: "flex-end", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
-                  <Field label="From" style={{ flex: "0 1 150px" }}>
-                    <input type="date" value={perfRangeStart} onChange={(e) => { setPerfRangeStart(e.target.value); setQuickRange(""); }} style={inputStyle_()} />
-                  </Field>
-                  <Field label="To" style={{ flex: "0 1 150px" }}>
-                    <input type="date" value={perfRangeEnd} onChange={(e) => { setPerfRangeEnd(e.target.value); setQuickRange(""); }} style={inputStyle_()} />
-                  </Field>
-                  {(perfRangeStart || perfRangeEnd) && (
-                    <button type="button" onClick={() => { setPerfRangeStart(firstEntryDate || ""); setPerfRangeEnd(""); setQuickRange(""); }} style={ghostBtnStyle_()}>
-                      Clear range
-                    </button>
-                  )}
                 </div>
 
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
-                  <span style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600 }}>Quick range</span>
-                  <select
-                    value={quickRange}
-                    onChange={(e) => applyQuickRange(e.target.value)}
-                    style={{ ...inputStyle_(), width: "auto", display: "inline-block" }}
-                  >
-                    <option value="">Custom</option>
-                    <option value="1d">1 Day</option>
-                    <option value="1w">1 Week</option>
-                    <option value="2w">2 Weeks</option>
-                    <option value="1m">1 Month</option>
-                    <option value="6m">6 Months</option>
-                    <option value="1y">1 Year</option>
-                  </select>
+                <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
+                  <CurveRangeToggle value={quickRange} onChange={applyQuickRange} options={CURVE_RANGES} />
+                  <div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
+                    <Field label="From" style={{ width: 148 }}>
+                      <input type="date" value={perfRangeStart} onChange={(e) => { setPerfRangeStart(e.target.value); setQuickRange(""); }} style={{ ...inputStyle_(), padding: "7px 10px", fontSize: 13 }} />
+                    </Field>
+                    <Field label="To" style={{ width: 148 }}>
+                      <input type="date" value={perfRangeEnd} onChange={(e) => { setPerfRangeEnd(e.target.value); setQuickRange(""); }} style={{ ...inputStyle_(), padding: "7px 10px", fontSize: 13 }} />
+                    </Field>
+                  </div>
                 </div>
-                <div style={{ flex: 1, minHeight: 260 }}>
+
+                <div style={{ flex: 1, minHeight: 260, marginTop: 8 }}>
                   <EquityChart
                     points={equityCurve}
+                    fitToData={!!(perfRangeStart || perfRangeEnd)}
                     height={320}
                     profitTarget={profitTargetNum}
                     maxLossLevel={maxLossLevel}
@@ -4422,6 +4692,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                     minBalanceColor={targets.minBalanceColor || COLORS.loss}
                     axisColor={targets.axisColor || null}
                     payoutColor={targets.calPayoutColor || null}
+                    emptyText={chronoTradesAll.length ? "No trading days in this range yet." : "Log trades to see your account grow."}
                   />
                 </div>
               </div>
@@ -4435,7 +4706,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
               >
                 ← Prev
               </button>
-              <div style={{ fontSize: 15, fontWeight: 700 }}>{monthLabel}</div>
+              <div className="display" style={{ fontSize: 22, fontWeight: 700 }}>{monthLabel}</div>
               <button
                 onClick={() => { const m = calMonth + 1; if (m > 11) { setCalMonth(0); setCalYear(calYear + 1); } else setCalMonth(m); }}
                 style={ghostBtnStyle_()}
@@ -4444,7 +4715,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
               </button>
             </div>
 
-            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 14, boxShadow: "0 1px 2px rgba(23,21,51,0.04)", overflowX: "auto" }}>
+            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 20, padding: 16, boxShadow: COLORS.shadow, overflowX: "auto", marginBottom: 32 }}>
               <div style={{ minWidth: 670 }}>
                 {/* header row */}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr) 110px 110px", gap: 8, marginBottom: 8 }}>
@@ -4460,7 +4731,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                   <div key={wi} style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr) 110px 110px", gap: 8, marginBottom: 8 }}>
                     {week.cells.slice(1, 6).map((cell, ci) => {
                       if (!cell) {
-                        return <div key={ci} style={{ background: COLORS.subtleBg, border: `1px solid ${COLORS.border}`, borderRadius: 10, minHeight: 74 }} />;
+                        return <div key={ci} style={{ background: COLORS.subtleBg, borderRadius: 12, minHeight: 78, opacity: 0.6 }} />;
                       }
                       const d = cell.data;
                       const hasTrades = !!(d && d.count > 0);
@@ -4477,9 +4748,9 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                           onClick={() => hasTrades && setSelectedDay(cell.dateStr)}
                           style={{
                             position: "relative",
-                            borderRadius: 10, minHeight: 74, padding: "8px 10px",
+                            borderRadius: 12, minHeight: 78, padding: "9px 11px",
                             background: hasTrades ? cellSoft : COLORS.subtleBg,
-                            border: `1.5px solid ${hitDLL ? COLORS.loss : hasTrades ? cellColor : COLORS.border}`,
+                            border: hitDLL ? `1.5px solid ${COLORS.loss}` : `1px solid ${hasTrades ? cellColor + "59" : "transparent"}`,
                             display: "flex", flexDirection: "column", justifyContent: "space-between",
                             cursor: hasTrades ? "pointer" : "default",
                             transition: "transform 0.1s ease",
@@ -4537,9 +4808,9 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                     })}
                     <div
                       style={{
-                        borderRadius: 10, minHeight: 74, padding: "8px 10px",
+                        borderRadius: 12, minHeight: 78, padding: "9px 11px",
                         background: week.tradeCount ? (week.total >= 0 ? (targets.calWinColor || COLORS.win) + "1E" : (targets.calLossColor || COLORS.loss) + "1E") : COLORS.subtleBg,
-                        border: `1.5px solid ${week.tradeCount ? (week.total >= 0 ? (targets.calWinColor || COLORS.win) : (targets.calLossColor || COLORS.loss)) : COLORS.border}`,
+                        border: `1px solid ${week.tradeCount ? (week.total >= 0 ? (targets.calWinColor || COLORS.win) : (targets.calLossColor || COLORS.loss)) + "59" : "transparent"}`,
                         display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 4,
                       }}
                     >
@@ -4556,9 +4827,9 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                     </div>
                     <div
                       style={{
-                        borderRadius: 10, minHeight: 74, padding: "8px 10px",
+                        borderRadius: 12, minHeight: 78, padding: "9px 11px",
                         background: week.payoutTotal !== 0 ? (targets.calPayoutColor || COLORS.payout) + "1E" : COLORS.subtleBg,
-                        border: `1.5px solid ${week.payoutTotal !== 0 ? (targets.calPayoutColor || COLORS.payout) : COLORS.border}`,
+                        border: `1px solid ${week.payoutTotal !== 0 ? (targets.calPayoutColor || COLORS.payout) + "59" : "transparent"}`,
                         display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 4,
                       }}
                     >
@@ -4575,7 +4846,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
               </div>
             </div>
 
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Trading Insights</div>
+            <div style={sectionTitleStyle_()}>Trading insights</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12, marginBottom: 28, alignItems: "stretch" }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <StatCard label="Most active" value={mostActiveDay ? mostActiveDay.label : "—"} />
@@ -4584,24 +4855,24 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                 <StatCard label="Trade direction" value={dominantDirection || "—"} />
               </div>
 
-              <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
-                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Drawdown curve</div>
+              <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, boxShadow: COLORS.shadow }}>
+                <div style={sectionTitleStyle_()}>Drawdown curve</div>
                 <DrawdownChart points={drawdownCurve} height={220} />
               </div>
 
-              <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
-                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Duration analysis</div>
+              <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, boxShadow: COLORS.shadow }}>
+                <div style={sectionTitleStyle_()}>Duration analysis</div>
                 <div style={{ display: "flex", gap: 20, marginBottom: 16, flexWrap: "wrap" }}>
                   <div>
-                    <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>AVG WIN</div>
+                    <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>Avg win</div>
                     <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: COLORS.win }}>{fmtMoney(avgWinAll)}</div>
                   </div>
                   <div>
-                    <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>AVG LOSS</div>
+                    <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>Avg loss</div>
                     <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: COLORS.loss }}>{fmtMoney(avgLossAll)}</div>
                   </div>
                   <div>
-                    <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>AVG TRADE DURATION</div>
+                    <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>Avg trade duration</div>
                     <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: COLORS.text }}>{fmtDuration(avgDuration)}</div>
                   </div>
                 </div>
@@ -4669,7 +4940,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
         ) : tab === "patterns" ? (
           <>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
-              <div style={{ fontSize: 13, fontWeight: 700 }}>Patterns</div>
+              <div style={sectionTitleStyle_({ marginBottom: 0 })}>Patterns</div>
               {patternPerf.length > 0 && (
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600 }}>Sort by</span>
@@ -4693,7 +4964,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
             ) : (
               <div style={{ display: "grid", gap: 10, marginBottom: 28 }}>
                 {sortedPatternPerf.map((p) => (
-                  <div key={p.id} style={{ position: "relative", background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                  <div key={p.id} style={{ position: "relative", background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, boxShadow: COLORS.shadow }}>
                     <span className="mono" style={{ position: "absolute", top: 14, left: 16, fontSize: 11.5, color: COLORS.textMuted, fontWeight: 700 }}>#{p.number}</span>
                     <button onClick={() => deletePatternRow(p.id)} style={{ ...deleteBtnStyle_(), position: "absolute", top: 12, right: 12 }} aria-label="Delete pattern">✕</button>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 10, padding: "0 30px" }}>
@@ -4713,11 +4984,11 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                       style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 6, cursor: "pointer" }}
                     >
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 9.5, fontWeight: 700, color: COLORS.textMuted, textTransform: "uppercase", letterSpacing: "0.04em" }}>Confluences</div>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted }}>Confluences</div>
                         <div style={{ fontSize: 12, color: p.confLabel ? COLORS.text : COLORS.textMuted }}>{p.confLabel || "—"}</div>
                       </div>
                       <div style={{ textAlign: "right", minWidth: 0 }}>
-                        <div style={{ fontSize: 9.5, fontWeight: 700, color: COLORS.textMuted, textTransform: "uppercase", letterSpacing: "0.04em" }}>Targets</div>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted }}>Targets</div>
                         <div style={{ fontSize: 12, color: p.tagLabel ? COLORS.text : COLORS.textMuted }}>{p.tagLabel || "—"}</div>
                       </div>
                     </div>
@@ -4783,7 +5054,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
               </div>
             )}
 
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>By mood</div>
+            <div style={sectionTitleStyle_()}>By mood</div>
             {patternStats.length === 0 ? (
               <EmptyState text="Link journal entries to trades (in the Journal tab) to see how you perform by how you felt." />
             ) : (
@@ -4798,7 +5069,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                     const barWidth = Math.max((Math.abs(p.total) / maxAbs) * 100, 4);
                     const expanded = expandedMoodKey === p.moodKey;
                     return (
-                      <div key={p.moodKey} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                      <div key={p.moodKey} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, boxShadow: COLORS.shadow }}>
                         <div
                           onClick={() => setExpandedMoodKey(expanded ? null : p.moodKey)}
                           style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10, cursor: "pointer" }}
@@ -4864,7 +5135,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
 
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
               <div>
-                <div style={{ fontSize: 13, fontWeight: 700 }}>From your journal</div>
+                <div style={sectionTitleStyle_({ marginBottom: 0 })}>From your journal</div>
                 <div style={{ fontSize: 11.5, color: COLORS.textMuted, marginTop: 2 }}>
                   AI-read patterns from your journal notes — the rest of this tab only reads structured fields, this reads what you actually wrote.
                   {journalInsightsRunAt && !journalInsightsLoading && ` Last analyzed ${new Date(journalInsightsRunAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}.`}
@@ -4899,7 +5170,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
           </>
         ) : tab === "friends" ? (
           <>
-            <form onSubmit={saveNickname} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+            <form onSubmit={saveNickname} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: COLORS.shadow }}>
               <div style={{ fontSize: 13, color: COLORS.text, fontWeight: 700 }}>Your nickname</div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
                 <Field label="Shown to friends instead of your email" style={{ flex: "1 1 220px" }}>
@@ -4921,7 +5192,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
               )}
             </form>
 
-            <form onSubmit={sendFriendRequest} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+            <form onSubmit={sendFriendRequest} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: COLORS.shadow }}>
               <div style={{ fontSize: 13, color: COLORS.text, fontWeight: 700 }}>Add a friend</div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
                 <Field label="Their email" style={{ flex: "1 1 220px" }}>
@@ -4944,10 +5215,10 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
               <>
                 {friendships.filter((f) => f.status === "pending" && !f.iAmRequester).length > 0 && (
                   <>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>REQUESTS RECEIVED</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>Requests received</div>
                     <div style={{ display: "grid", gap: 10, marginBottom: 24 }}>
                       {friendships.filter((f) => f.status === "pending" && !f.iAmRequester).map((f) => (
-                        <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                        <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", boxShadow: COLORS.shadow }}>
                           <div style={{ fontSize: 14, fontWeight: 600 }}>{(f.otherProfile && (f.otherProfile.display_name || f.otherProfile.email)) || "Unknown"}</div>
                           <div style={{ display: "flex", gap: 8 }}>
                             <button onClick={() => respondToFriendRequest(f.id, "accepted")} style={primaryBtnStyle_()}>Accept</button>
@@ -4961,10 +5232,10 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
 
                 {friendships.filter((f) => f.status === "pending" && f.iAmRequester).length > 0 && (
                   <>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>REQUESTS SENT</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>Requests sent</div>
                     <div style={{ display: "grid", gap: 10, marginBottom: 24 }}>
                       {friendships.filter((f) => f.status === "pending" && f.iAmRequester).map((f) => (
-                        <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                        <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", boxShadow: COLORS.shadow }}>
                           <div style={{ fontSize: 14, fontWeight: 600 }}>{(f.otherProfile && (f.otherProfile.display_name || f.otherProfile.email)) || "Unknown"}</div>
                           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                             <span style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600 }}>Pending</span>
@@ -4976,13 +5247,13 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                   </>
                 )}
 
-                <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>FRIENDS</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>Friends</div>
                 {acceptedFriends.length === 0 ? (
                   <EmptyState text="No friends yet. Add one by email above." />
                 ) : (
                   <div style={{ display: "grid", gap: 10 }}>
                     {acceptedFriends.map((f) => (
-                      <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                      <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", boxShadow: COLORS.shadow }}>
                         <button
                           onClick={() => openFriendPerformance(f)}
                           style={{ background: "transparent", border: "none", padding: 0, fontSize: 14, fontWeight: 600, color: COLORS.text, cursor: "pointer", textAlign: "left" }}
@@ -5001,7 +5272,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
             )}
 
             <div style={{ fontSize: 13, fontWeight: 700, marginTop: 28, marginBottom: 12 }}>Groups</div>
-            <form onSubmit={createGroup} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 16, display: "grid", gap: 12, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+            <form onSubmit={createGroup} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 16, display: "grid", gap: 12, boxShadow: COLORS.shadow }}>
               <Field label="Group name">
                 <input type="text" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} placeholder="e.g. ICT Crew" style={inputStyle_()} />
               </Field>
@@ -5051,7 +5322,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                     style={{
                       background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16,
                       display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-                      boxShadow: "0 1px 2px rgba(23,21,51,0.04)", cursor: "pointer", textAlign: "left", width: "100%",
+                      boxShadow: COLORS.shadow, cursor: "pointer", textAlign: "left", width: "100%",
                     }}
                   >
                     <span style={{ fontSize: 14, fontWeight: 700, color: COLORS.text }}>{g.name}</span>
@@ -5066,7 +5337,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 28, alignItems: "start" }}>
               <div>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                  <span style={{ fontSize: 13, fontWeight: 700 }}>Targets</span>
+                  <span style={sectionTitleStyle_({ marginBottom: 0 })}>Targets</span>
                   {targetsPopped ? (
                     <button onClick={() => setTargetsPopped(false)} style={ghostBtnStyle_()}>Dock back here</button>
                   ) : (
@@ -5076,15 +5347,15 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                 {targetsPopped ? (
                   <EmptyState text="Targets is popped out as a floating window — drag it around on the Performance tab to watch the chart update live. Click “Dock back here” above to bring it back." />
                 ) : (
-                  <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 18, boxShadow: "0 1px 2px rgba(23,21,51,0.04)", display: "flex", flexDirection: "column", gap: 16 }}>
+                  <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 18, boxShadow: COLORS.shadow, display: "flex", flexDirection: "column", gap: 16 }}>
                     <TargetsPanel targets={targets} updateTargets={updateTargets} profitTargetHit={profitTargetHit} maxLossHit={maxLossHit} dailyLossLimitHitToday={!!(dayMap[todayStr()] && dayMap[todayStr()].dllHit)} />
                   </div>
                 )}
               </div>
 
               <div>
-                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Appearance</div>
-                <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 18, boxShadow: "0 1px 2px rgba(23,21,51,0.04)", display: "grid", gap: 10 }}>
+                <div style={sectionTitleStyle_()}>Appearance</div>
+                <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 18, boxShadow: COLORS.shadow, display: "grid", gap: 10 }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <span style={{ fontSize: 13, color: COLORS.textMuted }}>Selected tab</span>
                     <input
@@ -5104,10 +5375,10 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                     />
                   </div>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <span style={{ fontSize: 13, color: COLORS.textMuted }}>Welcome banner</span>
+                    <span style={{ fontSize: 13, color: COLORS.textMuted }}>Dashboard growth panel</span>
                     <input
                       type="color"
-                      value={targets.welcomeBannerColor || COLORS.accent}
+                      value={targets.welcomeBannerColor || COLORS.ink}
                       onChange={(e) => updateTargets({ welcomeBannerColor: e.target.value })}
                       style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
                     />
@@ -5125,8 +5396,8 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
               </div>
             </div>
 
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Subscription</div>
-            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 18, boxShadow: "0 1px 2px rgba(23,21,51,0.04)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 28 }}>
+            <div style={sectionTitleStyle_()}>Subscription</div>
+            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 18, boxShadow: COLORS.shadow, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 28 }}>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>
                   {subscriptionStatus === "active" ? "Active" : subscriptionStatus === "trialing" ? "Free trial" : subscriptionStatus === "past_due" ? "Payment past due" : "Canceled"}
@@ -5149,8 +5420,8 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
               </div>
             </div>
 
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Leaderboard</div>
-            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 18, boxShadow: "0 1px 2px rgba(23,21,51,0.04)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 28 }}>
+            <div style={sectionTitleStyle_()}>Leaderboard</div>
+            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 18, boxShadow: COLORS.shadow, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 28 }}>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Appear on the global leaderboard</div>
                 <div style={{ fontSize: 12, color: COLORS.textMuted, maxWidth: 420 }}>
@@ -5169,10 +5440,10 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
               </button>
             </div>
 
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Pattern configuration</div>
+            <div style={sectionTitleStyle_()}>Pattern configuration</div>
 
             <div style={{ fontSize: 12.5, fontWeight: 600, color: COLORS.textMuted, marginBottom: 10 }}>Confluences</div>
-            <form onSubmit={addConfluence} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+            <form onSubmit={addConfluence} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", boxShadow: COLORS.shadow }}>
               <Field label="New confluence name" style={{ flex: "1 1 220px" }}>
                 <input type="text" value={newConfluenceName} onChange={(e) => setNewConfluenceName(e.target.value)} placeholder="e.g. IFVG" style={inputStyle_()} />
               </Field>
@@ -5198,7 +5469,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
             )}
 
             <div style={{ fontSize: 12.5, fontWeight: 600, color: COLORS.textMuted, marginBottom: 10 }}>Target tags</div>
-            <form onSubmit={addTargetTag} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+            <form onSubmit={addTargetTag} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", boxShadow: COLORS.shadow }}>
               <Field label="New target name" style={{ flex: "1 1 220px" }}>
                 <input type="text" value={newTargetTagName} onChange={(e) => setNewTargetTagName(e.target.value)} placeholder="e.g. Previous day high" style={inputStyle_()} />
               </Field>
@@ -5218,7 +5489,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
               </div>
             )}
 
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Legal</div>
+            <div style={sectionTitleStyle_()}>Legal</div>
             <div style={{ display: "flex", gap: 16 }}>
               <a href="/privacy.html" target="_blank" rel="noopener" style={{ color: COLORS.accent, fontSize: 13, fontWeight: 600 }}>Privacy Policy</a>
               <a href="/terms.html" target="_blank" rel="noopener" style={{ color: COLORS.accent, fontSize: 13, fontWeight: 600 }}>Terms &amp; Conditions</a>
@@ -5299,7 +5570,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                         border: `1.5px solid ${isMe ? (targets.selectedTabColor || COLORS.accent) : COLORS.border}`,
                         borderRadius: 16, padding: "14px 18px",
                         display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap",
-                        boxShadow: "0 1px 2px rgba(23,21,51,0.04)",
+                        boxShadow: COLORS.shadow,
                       }}
                     >
                       <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
@@ -5321,7 +5592,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
         ) : tab === "feedback" ? (
           <>
             {!isFeedbackAdmin && (
-              <form onSubmit={submitFeedback} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+              <form onSubmit={submitFeedback} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: COLORS.shadow }}>
                 <Field label="What should we build or fix next?">
                   <textarea
                     value={feedbackMessage}
@@ -5341,7 +5612,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
               </form>
             )}
 
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>{isFeedbackAdmin ? "Feedback inbox" : "Your past feedback"}</div>
+            <div style={sectionTitleStyle_()}>{isFeedbackAdmin ? "Feedback inbox" : "Your past feedback"}</div>
             {isFeedbackAdmin && (
               <div style={{ fontSize: 11.5, color: COLORS.textMuted, marginBottom: 16 }}>
                 Only visible to this account — every other user only ever sees their own submissions.
@@ -5352,7 +5623,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
             ) : (
               <div style={{ display: "grid", gap: 10 }}>
                 {pastFeedback.map((f) => (
-                  <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                  <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, boxShadow: COLORS.shadow }}>
                     {isFeedbackAdmin && (
                       <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.accent, marginBottom: 6 }}>
                         {f.display_name || f.email || "Unknown user"}
@@ -5382,7 +5653,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
               </div>
             )}
 
-            <form onSubmit={addEntry} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+            <form onSubmit={addEntry} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: COLORS.shadow }}>
               <div style={{ fontSize: 13, color: COLORS.text, fontWeight: 700 }}>Journal entry</div>
               <Field label="Date">
                 <input type="date" value={jDate} onChange={(e) => setJDate(e.target.value)} style={inputStyle_()} />
@@ -5453,7 +5724,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                   const mi = moodInfo(en.mood);
                   const linkedTrade = en.tradeId ? findTrade(en.tradeId) : null;
                   return (
-                    <div key={en.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, boxShadow: "0 1px 2px rgba(23,21,51,0.04)" }}>
+                    <div key={en.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, boxShadow: COLORS.shadow }}>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                           <span className="mono" style={{ fontSize: 12.5, color: COLORS.textMuted }}>{en.date}</span>
@@ -5702,7 +5973,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
               </div>
 
               <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>CONFLUENCES</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>Confluences</div>
                 {confluencesList.length === 0 ? (
                   <div style={{ fontSize: 12, color: COLORS.textMuted }}>No confluences yet — add some in the Patterns tab.</div>
                 ) : (
@@ -5742,7 +6013,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
               </div>
 
               <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>TARGETS</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>Targets</div>
                 {targetTagsList.length === 0 ? (
                   <div style={{ fontSize: 12, color: COLORS.textMuted }}>No targets yet — add some in the Patterns tab.</div>
                 ) : (
@@ -5892,7 +6163,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
             </div>
             {linkedEntries.length > 0 && (
               <div style={{ marginBottom: 18, display: "grid", gap: 10 }}>
-                <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600 }}>JOURNAL</div>
+                <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600 }}>Journal</div>
                 {linkedEntries.map((en) => {
                   const mi = moodInfo(en.mood);
                   return (
@@ -5962,13 +6233,13 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
             </div>
             {en.feelingDetail && (
               <div style={{ marginBottom: 14 }}>
-                <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>WHAT WAS THE FEELING</div>
+                <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>What was the feeling</div>
                 <div style={{ fontSize: 13.5, color: COLORS.text, whiteSpace: "pre-wrap" }}>{en.feelingDetail}</div>
               </div>
             )}
             {en.notes && (
               <div style={{ marginBottom: 18 }}>
-                <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>NOTES</div>
+                <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>Notes</div>
                 <div style={{ fontSize: 13.5, color: COLORS.text, whiteSpace: "pre-wrap" }}>{en.notes}</div>
               </div>
             )}
@@ -6269,7 +6540,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                   )}
 
                   <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>MEMBERS</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>Members</div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                       {groupMembers.map((m) => (
                         <span key={m.id} style={{ fontSize: 12.5, fontWeight: 600, background: COLORS.subtleBg, border: `1px solid ${COLORS.border}`, borderRadius: 20, padding: "6px 14px" }}>
@@ -6280,7 +6551,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                   </div>
 
                   <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>CONFLUENCES</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>Confluences</div>
                     <form onSubmit={addGroupConfluence} style={{ display: "flex", gap: 8, marginBottom: 10 }}>
                       <input type="text" value={newGroupConfluenceName} onChange={(e) => setNewGroupConfluenceName(e.target.value)} placeholder="e.g. IFVG" style={inputStyle_()} />
                       <button type="submit" style={primaryBtnStyle_()}>Add</button>
@@ -6296,7 +6567,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                   </div>
 
                   <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>TARGETS</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>Targets</div>
                     <form onSubmit={addGroupTargetTag} style={{ display: "flex", gap: 8, marginBottom: 10 }}>
                       <input type="text" value={newGroupTargetTagName} onChange={(e) => setNewGroupTargetTagName(e.target.value)} placeholder="e.g. Previous day high" style={inputStyle_()} />
                       <button type="submit" style={primaryBtnStyle_()}>Add</button>
@@ -6312,7 +6583,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                   </div>
 
                   <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>CHAT BACKGROUND</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>Chat background</div>
                     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
                       <span style={{ fontSize: 12.5, color: COLORS.textMuted }}>Color</span>
                       <input
@@ -6360,7 +6631,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                       backgroundSize: "cover", backgroundPosition: "center", backgroundRepeat: "no-repeat",
                     }}
                   >
-                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>TRADING PATTERNS</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>Trading patterns</div>
                     {groupPatternPerf.length === 0 ? (
                       <EmptyState text="No group patterns yet — add confluences in Settings (gear icon below), then tag a trade below." />
                     ) : (
@@ -6430,7 +6701,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                       </form>
                     </details>
 
-                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>CHAT</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>Chat</div>
                     {groupMessages.length === 0 ? (
                       <EmptyState text="No messages yet — say hi." />
                     ) : (
