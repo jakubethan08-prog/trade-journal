@@ -99,6 +99,8 @@
     .trade-shot-stage { min-height: 280px !important; }
     .settings-layout { grid-template-columns: 1fr !important; }
     .settings-nav { display: none !important; }
+    .friends-layout, .journal-layout { grid-template-columns: 1fr !important; }
+    .journal-composer { position: static !important; max-height: none !important; }
   }
 </style>
 </head>
@@ -295,14 +297,13 @@ const TIMEFRAME_LABEL = Object.fromEntries(TIMEFRAMES.map((t) => [t.value, t.lab
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
-function todayStr() {
-  return new Date().toISOString().slice(0, 10);
-}
-// Local-calendar YYYY-MM-DD (todayStr above is UTC, which can be a day off
-// in the evening) — used for the growth-curve range so "past 30 days" means
-// the user's own last 30 days.
+// Local-calendar YYYY-MM-DD. (Not toISOString, which is UTC and shows the
+// wrong day around midnight for anyone outside UTC.)
 function localDateStr(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function todayStr() {
+  return localDateStr(new Date());
 }
 function daysAgoStr(n) {
   const d = new Date();
@@ -410,6 +411,7 @@ function rowToTrade(row) {
     duration: Number(row.duration_seconds) || 0,
     risk: row.risk === null || row.risk === undefined ? null : Number(row.risk),
     rr: row.rr === null || row.rr === undefined ? null : Number(row.rr),
+    realizedRR: row.realized_rr === null || row.realized_rr === undefined ? null : Number(row.realized_rr),
     grade: row.grade || null,
     entryType: row.entry_type,
     rulesFollowed: row.rules_followed === null || row.rules_followed === undefined ? null : row.rules_followed,
@@ -418,7 +420,7 @@ function rowToTrade(row) {
   };
 }
 function tradeToRow(t, userId) {
-  return {
+  const row = {
     user_id: userId,
     date: t.date,
     symbol: t.symbol ? t.symbol : null,
@@ -432,6 +434,10 @@ function tradeToRow(t, userId) {
     rules_followed: t.rulesFollowed === undefined ? null : t.rulesFollowed,
     break_even: t.entryType === "payout" ? false : !!t.breakEven,
   };
+  // Only sent when there's a value, so saving trades keeps working on a
+  // database that hasn't had the realized_rr column added yet.
+  if (t.realizedRR !== "" && t.realizedRR !== null && t.realizedRR !== undefined) row.realized_rr = Number(t.realizedRR);
+  return row;
 }
 function rowToEntry(row) {
   return {
@@ -1412,6 +1418,29 @@ function StatusPill({ tone, children }) {
   );
 }
 
+// Initial-in-a-circle avatar, tinted with a color picked from the name so the
+// same person always gets the same color.
+const AVATAR_COLORS = ["#6C4FE0", "#0B93CC", "#12A454", "#C2410C", "#DB2777", "#0D9488", "#7C3AED"];
+function Avatar({ name, size = 36 }) {
+  const label = String(name || "?").trim() || "?";
+  let h = 0;
+  for (let i = 0; i < label.length; i++) h = (h * 31 + label.charCodeAt(i)) >>> 0;
+  const c = AVATAR_COLORS[h % AVATAR_COLORS.length];
+  return (
+    <div
+      aria-hidden="true"
+      className="display"
+      style={{
+        width: size, height: size, borderRadius: "50%", flexShrink: 0,
+        background: c + "22", color: c, display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: Math.round(size * 0.42), fontWeight: 800,
+      }}
+    >
+      {label.charAt(0).toUpperCase()}
+    </div>
+  );
+}
+
 function MoneyInput({ value, onChange, placeholder = "0.00", ariaLabel, width = 150 }) {
   return (
     <div style={{ position: "relative", width }}>
@@ -1887,6 +1916,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
   const [tSide, setTSide] = useState("long");
   const [tRisk, setTRisk] = useState("");
   const [tRR, setTRR] = useState("");
+  const [tRealizedRR, setTRealizedRR] = useState("");
   const [tGrade, setTGrade] = useState("");
   const [tRulesFollowed, setTRulesFollowed] = useState(null); // null = not set, true/false = answered
   const [tBreakEven, setTBreakEven] = useState(false);
@@ -2972,6 +3002,34 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
     return () => window.removeEventListener("paste", onPaste);
   }, [tab, tEntryType]);
 
+  // The Add Trade and Journal dates follow the real calendar day: they snap
+  // to today when you open the tab and when you come back to the app (e.g.
+  // after midnight), unless you've picked a different date on this visit.
+  // Leaving the tab releases a hand-picked date.
+  const tDateTouchedRef = useRef(false);
+  const jDateTouchedRef = useRef(false);
+  useEffect(() => {
+    function syncToToday() {
+      const today = todayStr();
+      if (!tDateTouchedRef.current) setTDate((d) => (d === today ? d : today));
+      if (!jDateTouchedRef.current) setJDate((d) => (d === today ? d : today));
+    }
+    window.addEventListener("focus", syncToToday);
+    document.addEventListener("visibilitychange", syncToToday);
+    const timer = setInterval(syncToToday, 60 * 1000);
+    return () => {
+      window.removeEventListener("focus", syncToToday);
+      document.removeEventListener("visibilitychange", syncToToday);
+      clearInterval(timer);
+    };
+  }, []);
+  useEffect(() => {
+    if (tab !== "trades") tDateTouchedRef.current = false;
+    if (tab !== "journal") jDateTouchedRef.current = false;
+    if (tab === "trades" && !tDateTouchedRef.current) setTDate(todayStr());
+    if (tab === "journal" && !jDateTouchedRef.current) setJDate(todayStr());
+  }, [tab]);
+
   // Free the preview's object URL when it's replaced or the form unmounts.
   useEffect(() => {
     if (!tShot) return;
@@ -3017,7 +3075,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
       pnl: tEntryType === "payout" ? -Math.abs(Number(tPnl)) : Number(tPnl) * accountsMultiplier,
       duration: (Number(tDurH) || 0) * 3600 + (Number(tDurM) || 0) * 60 + (Number(tDurS) || 0),
       symbol: tSymbol.trim(),
-      side: tSide, risk: tRisk === "" ? null : Number(tRisk), rr: tRR === "" ? null : Number(tRR), grade: tGrade || null, entryType: tEntryType,
+      side: tSide, risk: tRisk === "" ? null : Number(tRisk), rr: tRR === "" ? null : Number(tRR), realizedRR: tEntryType === "trade" && tRealizedRR !== "" ? Number(tRealizedRR) : null, grade: tGrade || null, entryType: tEntryType,
       rulesFollowed: tEntryType === "trade" ? tRulesFollowed : null,
       breakEven: tEntryType === "trade" ? tBreakEven : false,
     };
@@ -3079,7 +3137,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
     // Symbol deliberately isn't cleared — you usually log several trades on
     // the same instrument in a row, so it stays put until you type over it.
     setTPnl(""); setTDurH(""); setTDurM(""); setTDurS("");
-    setTRisk(""); setTRR(""); setTSide("long"); setTGrade(""); setTEntryType("trade"); setTRulesFollowed(null); setTBreakEven(false);
+    setTRisk(""); setTRR(""); setTRealizedRR(""); setTSide("long"); setTGrade(""); setTEntryType("trade"); setTRulesFollowed(null); setTBreakEven(false);
     setTConfluenceEntries([]); setPickConfluenceId(""); setPickTimeframe(""); setPickPoints(""); setTTargetTags([]);
   }
 
@@ -3171,6 +3229,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
       durationH: String(hms.h), durationM: String(hms.m), durationS: String(hms.s),
       risk: t.risk === null || t.risk === undefined ? "" : String(t.risk),
       rr: t.rr === null || t.rr === undefined ? "" : String(t.rr),
+      realizedRR: t.realizedRR === null || t.realizedRR === undefined ? "" : String(t.realizedRR),
       grade: t.grade || "",
       rulesFollowed: t.rulesFollowed === undefined ? null : t.rulesFollowed,
       breakEven: !!t.breakEven,
@@ -3197,6 +3256,12 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
       rules_followed: current.entryType === "payout" ? null : editForm.rulesFollowed,
       break_even: current.entryType === "payout" ? false : !!editForm.breakEven,
     };
+    // Same as tradeToRow: only touch realized_rr when there's something to
+    // set or clear, so edits work before the column exists.
+    const hadRealized = current.realizedRR !== null && current.realizedRR !== undefined;
+    if (current.entryType !== "payout" && (editForm.realizedRR !== "" || hadRealized)) {
+      patch.realized_rr = editForm.realizedRR === "" ? null : Number(editForm.realizedRR);
+    }
     const { error } = await supabaseClient.from("trades").update(patch).eq("id", editingTradeId);
     if (error) { setEditForm({ ...editForm, error: "Couldn't save changes — try again." }); return; }
     const next = trades.map((t) => (t.id === editingTradeId ? {
@@ -3208,6 +3273,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
       duration: patch.duration_seconds,
       risk: patch.risk,
       rr: patch.rr,
+      realizedRR: "realized_rr" in patch ? patch.realized_rr : t.realizedRR,
       grade: patch.grade,
       rulesFollowed: patch.rules_followed,
       breakEven: patch.break_even,
@@ -3358,6 +3424,8 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
   const profitFactor = grossLoss > 0 ? (grossWin / grossLoss) : (grossWin > 0 ? Infinity : 0);
   const tradesWithRR = tradingOnly.filter((t) => t.rr !== null && t.rr !== undefined && !Number.isNaN(t.rr));
   const avgRR = tradesWithRR.length ? tradesWithRR.reduce((s, t) => s + t.rr, 0) / tradesWithRR.length : null;
+  const tradesWithRealizedRR = tradingOnly.filter((t) => t.realizedRR !== null && t.realizedRR !== undefined && !Number.isNaN(t.realizedRR));
+  const avgRealizedRR = tradesWithRealizedRR.length ? tradesWithRealizedRR.reduce((s, t) => s + t.realizedRR, 0) / tradesWithRealizedRR.length : null;
 
   const moodInfo = (key) => MOODS.find((m) => m.key === key) || MOODS[MOODS.length - 1];
 
@@ -4360,7 +4428,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
               {tEntryType === "payout" ? (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, maxWidth: 560 }}>
                   <Field label="Date">
-                    <input type="date" value={tDate} onChange={(e) => setTDate(e.target.value)} style={inputStyle_()} />
+                    <input type="date" value={tDate} onChange={(e) => { tDateTouchedRef.current = true; setTDate(e.target.value); }} style={inputStyle_()} />
                   </Field>
                   <Field label="Value ($)">
                     <input
@@ -4432,6 +4500,9 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                               {savedPnl !== null && (
                                 <span className="mono" style={{ ...stageChip, color: savedPnl > 0 ? INK_UI.win : savedPnl < 0 ? INK_UI.loss : INK_UI.text }}>{fmtMoney(savedPnl)}</span>
                               )}
+                              {tRealizedRR !== "" && !Number.isNaN(Number(tRealizedRR)) && (
+                                <span className="mono" style={{ ...stageChip, color: Number(tRealizedRR) > 0 ? INK_UI.win : Number(tRealizedRR) < 0 ? INK_UI.loss : INK_UI.text }}>{Number(tRealizedRR) > 0 ? "+" : ""}{Number(tRealizedRR)}R</span>
+                              )}
                               {tGrade && <span className="display" style={{ ...stageChip, letterSpacing: "-0.01em" }}>{tGrade}</span>}
                             </div>
                           </>
@@ -4464,7 +4535,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                       <div style={{ display: "grid", gap: 14, alignContent: "start" }}>
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                           <Field label="Date">
-                            <input type="date" value={tDate} onChange={(e) => setTDate(e.target.value)} style={inputStyle_()} />
+                            <input type="date" value={tDate} onChange={(e) => { tDateTouchedRef.current = true; setTDate(e.target.value); }} style={inputStyle_()} />
                           </Field>
                           <Field label="Symbol">
                             <input type="text" value={tSymbol} onChange={(e) => setTSymbol(e.target.value)} placeholder="MNQ, ES…" style={inputStyle_()} />
@@ -4501,12 +4572,15 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                             </div>
                           </Field>
                         </div>
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
                           <Field label="Risk (%)">
                             <input type="number" step="0.001" min="0" value={tRisk} onChange={(e) => setTRisk(e.target.value)} placeholder="—" style={inputStyle_()} className="mono" />
                           </Field>
-                          <Field label="R:R">
-                            <input type="number" step="0.01" min="0" value={tRR} onChange={(e) => setTRR(e.target.value)} placeholder="e.g. 2.50" style={inputStyle_()} className="mono" />
+                          <Field label="Expected R:R">
+                            <input type="number" step="0.01" min="0" value={tRR} onChange={(e) => setTRR(e.target.value)} placeholder="e.g. 2.50" title="The reward-to-risk you planned for" style={inputStyle_()} className="mono" />
+                          </Field>
+                          <Field label="Realized R:R">
+                            <input type="number" step="0.01" value={tRealizedRR} onChange={(e) => setTRealizedRR(e.target.value)} placeholder="e.g. 1.80" title="What you actually got, in R. Negative for a loss (e.g. -1)" style={inputStyle_()} className="mono" />
                           </Field>
                         </div>
                         <Field label="Grade">
@@ -4534,11 +4608,12 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                             })}
                           </div>
                         </Field>
-                        <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 10 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                           <Field label="Followed rules?">
                             <div style={{ display: "flex", gap: 6 }}>
-                              {[["Yes", true], ["No", false], ["—", null]].map(([lbl, val]) => (
-                                <button key={lbl} type="button" aria-pressed={tRulesFollowed === val} onClick={() => setTRulesFollowed(val)} style={segBtn(tRulesFollowed === val, COLORS.accent)}>
+                              {/* Clicking the selected answer again clears it (unanswered). */}
+                              {[["Yes", true], ["No", false]].map(([lbl, val]) => (
+                                <button key={lbl} type="button" aria-pressed={tRulesFollowed === val} onClick={() => setTRulesFollowed(tRulesFollowed === val ? null : val)} style={segBtn(tRulesFollowed === val, COLORS.accent)}>
                                   {lbl}
                                 </button>
                               ))}
@@ -4695,7 +4770,8 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                   { key: "symbol", label: "Symbol" },
                   { key: "side", label: "Side" },
                   { key: "risk", label: "Risk" },
-                  { key: "rr", label: "R:R" },
+                  { key: "rr", label: "Exp. R:R" },
+                  { key: "realizedRR", label: "Real. R:R" },
                   { key: "duration", label: "Duration" },
                   { key: "grade", label: "Grade" },
                   { key: "pnl", label: "P&L" },
@@ -4768,6 +4844,9 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                                   <td className="mono" style={{ padding: "10px 14px", color: COLORS.textMuted, whiteSpace: "nowrap" }}>
                                     {t.rr !== null && t.rr !== undefined ? `${t.rr}R` : "—"}
                                   </td>
+                                  <td className="mono" style={{ padding: "10px 14px", whiteSpace: "nowrap", fontWeight: t.realizedRR !== null && t.realizedRR !== undefined ? 700 : 400, color: t.realizedRR > 0 ? COLORS.win : t.realizedRR < 0 ? COLORS.loss : COLORS.textMuted }}>
+                                    {t.realizedRR !== null && t.realizedRR !== undefined ? `${t.realizedRR > 0 ? "+" : ""}${t.realizedRR}R` : "—"}
+                                  </td>
                                   <td className="mono" style={{ padding: "10px 14px", color: COLORS.textMuted, whiteSpace: "nowrap" }}>{fmtDuration(t.duration)}</td>
                                   <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
                                     {t.grade ? (
@@ -4823,12 +4902,13 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
           </>
         ) : tab === "calendar" ? (
           <>
-            <StatStrip columns={5} style={{ marginBottom: 16 }}>
+            <StatStrip columns={6} style={{ marginBottom: 16 }}>
               <StatCard label="Total P&L" value={fmtMoney(totalPnl)} color={totalPnl >= 0 ? COLORS.win : COLORS.loss} />
               <StatCard label="Win rate" value={`${winRate}%`} />
               <StatCard label="Profit factor" value={profitFactor === Infinity ? "∞" : profitFactor.toFixed(2)} />
               <StatCard label="Avg duration" value={fmtDuration(avgDuration)} />
-              <StatCard label="Avg R:R" value={avgRR === null ? "—" : avgRR.toFixed(2)} />
+              <StatCard label="Avg expected R:R" value={avgRR === null ? "—" : avgRR.toFixed(2)} />
+              <StatCard label="Avg realized R:R" value={avgRealizedRR === null ? "—" : `${avgRealizedRR > 0 ? "+" : ""}${avgRealizedRR.toFixed(2)}`} color={avgRealizedRR === null ? undefined : avgRealizedRR >= 0 ? COLORS.win : COLORS.loss} />
             </StatStrip>
 
             <div className="perf-top" style={{ marginBottom: 32 }}>
@@ -5141,18 +5221,25 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
           </>
         ) : tab === "patterns" ? (
           <>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
-              <div style={sectionTitleStyle_({ marginBottom: 0 })}>Patterns</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 12 }}>
+              <div style={sectionTitleStyle_({ marginBottom: 0 })}>
+                Your patterns {patternPerf.length > 0 && <span style={{ color: COLORS.textMuted, fontWeight: 600 }}>{patternPerf.length}</span>}
+              </div>
               {patternPerf.length > 0 && (
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600 }}>Sort by</span>
-                  <select value={patternSortBy} onChange={(e) => setPatternSortBy(e.target.value)} style={{ ...inputStyle_(), width: "auto", display: "inline-block" }}>
-                    <option value="number">Number</option>
-                    <option value="pnl">P&L</option>
-                    <option value="winRate">Win rate</option>
-                    <option value="expectancy">Expectancy</option>
-                    <option value="frequency">Frequency</option>
-                  </select>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12.5, color: COLORS.textMuted, fontWeight: 600 }}>Sort by</span>
+                  <CurveRangeToggle
+                    ariaLabel="Sort patterns by"
+                    value={patternSortBy}
+                    onChange={setPatternSortBy}
+                    options={[
+                      { key: "number", label: "Number" },
+                      { key: "pnl", label: "P&L" },
+                      { key: "winRate", label: "Win rate" },
+                      { key: "expectancy", label: "Expectancy" },
+                      { key: "frequency", label: "Frequency" },
+                    ]}
+                  />
                 </div>
               )}
             </div>
@@ -5162,97 +5249,118 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
               </div>
             )}
             {patternsList.length === 0 ? (
-              <EmptyState text="Patterns are built automatically: tag a trade with a combination of confluences and/or targets (in Add Trade), and that combination shows up here to grade and track." />
+              <EmptyState text="Patterns are built automatically: tag a trade with a combination of confluences and/or targets (in Add Trade), and that combination shows up here to track." />
             ) : (
-              <div style={{ display: "grid", gap: 10, marginBottom: 28 }}>
-                {sortedPatternPerf.map((p) => (
-                  <div key={p.id} style={{ position: "relative", background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, boxShadow: COLORS.shadow }}>
-                    <span className="mono" style={{ position: "absolute", top: 14, left: 16, fontSize: 11.5, color: COLORS.textMuted, fontWeight: 700 }}>#{p.number}</span>
-                    <button onClick={() => deletePatternRow(p.id)} style={{ ...deleteBtnStyle_(), position: "absolute", top: 12, right: 12 }} aria-label="Delete pattern">✕</button>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 10, padding: "0 30px" }}>
-                      <input
-                        key={p.id + ":" + (p.name || `Pattern ${p.number}`)}
-                        type="text"
-                        size={Math.max(12, (p.name || `Pattern ${p.number}`).length + 1)}
-                        defaultValue={p.name || `Pattern ${p.number}`}
-                        placeholder="Name this pattern"
-                        onBlur={(e) => { if (e.target.value.trim() !== (p.name || `Pattern ${p.number}`)) updatePatternName(p.id, e.target.value); }}
-                        style={{ ...inputStyle_(), width: "auto", maxWidth: "100%", textAlign: "center", fontSize: 14, fontWeight: 700, border: "none", background: "transparent", padding: "2px 0" }}
-                      />
-                      <span style={{ fontSize: 11, color: COLORS.textMuted, whiteSpace: "nowrap" }}>change name</span>
-                    </div>
-                    <div
-                      onClick={() => setExpandedPatternId(expandedPatternId === p.id ? null : p.id)}
-                      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 6, cursor: "pointer" }}
-                    >
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted }}>Confluences</div>
-                        <div style={{ fontSize: 12, color: p.confLabel ? COLORS.text : COLORS.textMuted }}>{p.confLabel || "—"}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 420px), 1fr))", gap: 16, marginBottom: 36, alignItems: "start" }}>
+                {sortedPatternPerf.map((p) => {
+                  const expanded = expandedPatternId === p.id;
+                  const confs = p.confLabel ? p.confLabel.split(" + ") : [];
+                  const tags = p.tagLabel ? p.tagLabel.split(" + ") : [];
+                  const cells = [
+                    { label: "Total P&L", value: fmtMoney(p.total), color: p.total >= 0 ? COLORS.win : COLORS.loss },
+                    { label: "Win rate", value: `${p.winRateP}%` },
+                    { label: "Expectancy", value: fmtMoney(p.expectancy), color: p.expectancy >= 0 ? COLORS.win : COLORS.loss },
+                    { label: "Trades", value: p.count },
+                  ];
+                  return (
+                    <div key={p.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 18, boxShadow: COLORS.shadow, overflow: "hidden" }}>
+                      <div style={{ padding: "16px 18px 14px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                          <span className="display" style={{ flexShrink: 0, fontSize: 13, fontWeight: 800, color: COLORS.accent, background: COLORS.accentSoft, borderRadius: 8, padding: "3px 8px" }}>#{p.number}</span>
+                          <input
+                            key={p.id + ":" + (p.name || `Pattern ${p.number}`)}
+                            type="text"
+                            defaultValue={p.name || `Pattern ${p.number}`}
+                            placeholder="Name this pattern"
+                            aria-label={`Name of pattern ${p.number}`}
+                            title="Click to rename"
+                            onBlur={(e) => { if (e.target.value.trim() !== (p.name || `Pattern ${p.number}`)) updatePatternName(p.id, e.target.value); }}
+                            onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                            className="display"
+                            style={{ flex: 1, minWidth: 0, fontSize: 18, fontWeight: 700, color: COLORS.text, border: "none", borderRadius: 8, background: "transparent", padding: "2px 4px", margin: "0 -4px" }}
+                          />
+                          <button onClick={() => deletePatternRow(p.id)} style={{ ...deleteBtnStyle_(), width: 30, height: 30, borderRadius: 8 }} aria-label={`Delete pattern ${p.number}`}>✕</button>
+                        </div>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+                          {confs.map((c, i) => (
+                            <span key={"c" + i} style={{ fontSize: 12.5, fontWeight: 600, color: COLORS.accent, background: COLORS.accentSoft, borderRadius: 999, padding: "4px 10px" }}>{c}</span>
+                          ))}
+                          {tags.map((t, i) => (
+                            <span key={"t" + i} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 600, color: COLORS.text, border: `1px solid ${COLORS.borderStrong}`, borderRadius: 999, padding: "3px 10px" }}>
+                              <span aria-hidden="true" style={{ color: COLORS.textMuted }}>◎</span>{t}
+                            </span>
+                          ))}
+                          {!confs.length && !tags.length && <span style={{ fontSize: 12.5, color: COLORS.textMuted }}>No tags</span>}
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 1, background: COLORS.border, borderRadius: 12, overflow: "hidden" }}>
+                          {cells.map((c) => (
+                            <div key={c.label} style={{ background: COLORS.subtleBg, padding: "9px 11px", minWidth: 0 }}>
+                              <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.textMuted, marginBottom: 2, whiteSpace: "nowrap" }}>{c.label}</div>
+                              <div className="display" style={{ fontSize: 16, fontWeight: 700, color: c.color || COLORS.text, overflowWrap: "anywhere" }}>{c.value}</div>
+                            </div>
+                          ))}
+                        </div>
+                        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12.5, color: COLORS.textMuted, marginTop: 10 }}>
+                          <span>Biggest win <span className="mono" style={{ fontWeight: 700, color: COLORS.win }}>{fmtMoney(p.biggestWin)}</span></span>
+                          <span>Biggest loss <span className="mono" style={{ fontWeight: 700, color: COLORS.loss }}>{fmtMoney(p.biggestLoss)}</span></span>
+                          {p.adherenceRate !== null && (
+                            <span>Rules followed <span className="mono" style={{ fontWeight: 700, color: COLORS.text }}>{p.adherenceRate}%</span></span>
+                          )}
+                        </div>
                       </div>
-                      <div style={{ textAlign: "right", minWidth: 0 }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted }}>Targets</div>
-                        <div style={{ fontSize: 12, color: p.tagLabel ? COLORS.text : COLORS.textMuted }}>{p.tagLabel || "—"}</div>
-                      </div>
-                    </div>
-                    <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                       <button
                         type="button"
-                        onClick={() => setExpandedPatternId(expandedPatternId === p.id ? null : p.id)}
-                        style={{ background: "none", border: "none", padding: 0, color: COLORS.accent, fontWeight: 600, fontSize: 12, cursor: "pointer" }}
+                        onClick={() => setExpandedPatternId(expanded ? null : p.id)}
+                        aria-expanded={expanded}
+                        style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 18px", background: "transparent", border: "none", borderTop: `1px solid ${COLORS.border}`, color: COLORS.accent, fontSize: 13, fontWeight: 700, cursor: "pointer" }}
                       >
-                        {expandedPatternId === p.id ? "Hide trades ▲" : "Show trades ▼"}
+                        <span>{expanded ? "Hide trades" : `Show ${p.count} trade${p.count === 1 ? "" : "s"}`}</span>
+                        <span aria-hidden="true">{expanded ? "▴" : "▾"}</span>
                       </button>
-                    </div>
-                    <div className="mono" style={{ display: "flex", gap: 20, fontSize: 12.5, color: COLORS.textMuted, flexWrap: "wrap" }}>
-                      <span>{p.count} trade{p.count === 1 ? "" : "s"}</span>
-                      <span>Win rate <span style={{ fontWeight: 700, color: COLORS.text }}>{p.winRateP}%</span></span>
-                      <span>Expectancy <span style={{ fontWeight: 700, color: p.expectancy >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(p.expectancy)}</span></span>
-                      <span>Total P&L <span style={{ fontWeight: 700, color: p.total >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(p.total)}</span></span>
-                      <span>Biggest win <span style={{ fontWeight: 700, color: COLORS.win }}>{fmtMoney(p.biggestWin)}</span></span>
-                      <span>Biggest loss <span style={{ fontWeight: 700, color: COLORS.loss }}>{fmtMoney(p.biggestLoss)}</span></span>
-                      {p.adherenceRate !== null && (
-                        <span>Rule adherence <span style={{ fontWeight: 700, color: COLORS.text }}>{p.adherenceRate}%</span></span>
+                      {expanded && (
+                        <div style={{ padding: "0 12px 12px", display: "grid", gap: 4 }}>
+                          {p.trades.map((t) => {
+                            const linkedEntries = entries.filter((en) => en.tradeId === t.id);
+                            return (
+                              <div key={t.id} style={{ background: COLORS.subtleBg, borderRadius: 10, padding: "8px 10px" }}>
+                                <div
+                                  onClick={() => openTradeView(t.id)}
+                                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: 13, cursor: "pointer" }}
+                                >
+                                  <span style={{ display: "flex", gap: 10, color: COLORS.textMuted, minWidth: 0 }}>
+                                    <span className="mono">#{tradeNumberMap.get(t.id)}</span>
+                                    <span className="mono">{t.date}</span>
+                                    <span style={{ color: COLORS.text, fontWeight: 600 }}>{t.symbol || "—"}</span>
+                                  </span>
+                                  <span className="mono" style={{ fontWeight: 700, color: t.pnl >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(t.pnl)}</span>
+                                </div>
+                                {linkedEntries.length > 0 && (
+                                  <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+                                    {linkedEntries.map((en) => {
+                                      const mi = moodInfo(en.mood);
+                                      const snippet = en.feelingDetail || en.notes;
+                                      return (
+                                        <div
+                                          key={en.id}
+                                          onClick={(e) => { e.stopPropagation(); setViewEntryId(en.id); }}
+                                          style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6, cursor: "pointer", minWidth: 0 }}
+                                        >
+                                          <span style={{ width: 6, height: 6, borderRadius: "50%", background: mi.color, flexShrink: 0 }} />
+                                          <span style={{ color: mi.color, fontWeight: 700, flexShrink: 0 }}>{mi.label}</span>
+                                          {snippet && <span style={{ color: COLORS.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{snippet}</span>}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
                       )}
                     </div>
-                    {expandedPatternId === p.id && (
-                      <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${COLORS.border}`, display: "grid", gap: 6 }}>
-                        {p.trades.map((t) => {
-                          const linkedEntries = entries.filter((en) => en.tradeId === t.id);
-                          return (
-                            <div key={t.id} style={{ background: COLORS.subtleBg, borderRadius: 8, padding: "6px 10px" }}>
-                              <div
-                                onClick={() => openTradeView(t.id)}
-                                className="mono"
-                                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: 12, cursor: "pointer" }}
-                              >
-                                <span style={{ color: COLORS.textMuted }}>#{tradeNumberMap.get(t.id)} · {t.date} · {t.symbol || "—"}</span>
-                                <span style={{ fontWeight: 700, color: t.pnl >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(t.pnl)}</span>
-                              </div>
-                              {linkedEntries.length > 0 && (
-                                <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
-                                  {linkedEntries.map((en) => {
-                                    const mi = moodInfo(en.mood);
-                                    return (
-                                      <div
-                                        key={en.id}
-                                        onClick={(e) => { e.stopPropagation(); setViewEntryId(en.id); }}
-                                        style={{ fontSize: 11, color: COLORS.accent, display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}
-                                      >
-                                        <span>🔗</span>
-                                        <span style={{ color: mi.color, fontWeight: 600 }}>{mi.label}</span>
-                                        {(en.feelingDetail || en.notes) && <span style={{ color: COLORS.textMuted }}>— {(en.feelingDetail || en.notes).slice(0, 60)}{(en.feelingDetail || en.notes).length > 60 ? "…" : ""}</span>}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
@@ -5261,51 +5369,57 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
               <EmptyState text="Link journal entries to trades (in the Journal tab) to see how you perform by how you felt." />
             ) : (
               <>
-                <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, marginBottom: 24 }}>
+                <StatStrip columns={2} style={{ marginBottom: 16 }}>
                   <StatCard label="Best state of mind" value={bestPattern ? bestPattern.label : "—"} color={COLORS.win} />
                   <StatCard label="Worst state of mind" value={worstPattern ? worstPattern.label : "—"} color={COLORS.loss} />
-                </div>
-                <div style={{ display: "grid", gap: 10 }}>
-                  {patternStats.map((p) => {
+                </StatStrip>
+                <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 18, boxShadow: COLORS.shadow, overflow: "hidden" }}>
+                  {patternStats.map((p, idx) => {
                     const maxAbs = Math.max(...patternStats.map((x) => Math.abs(x.total)), 1);
-                    const barWidth = Math.max((Math.abs(p.total) / maxAbs) * 100, 4);
+                    const barWidth = Math.max((Math.abs(p.total) / maxAbs) * 100, 3);
                     const expanded = expandedMoodKey === p.moodKey;
                     return (
-                      <div key={p.moodKey} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, boxShadow: COLORS.shadow }}>
-                        <div
+                      <div key={p.moodKey} style={{ borderTop: idx === 0 ? "none" : `1px solid ${COLORS.border}` }}>
+                        <button
+                          type="button"
                           onClick={() => setExpandedMoodKey(expanded ? null : p.moodKey)}
-                          style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10, cursor: "pointer" }}
+                          aria-expanded={expanded}
+                          style={{ width: "100%", display: "grid", gridTemplateColumns: "minmax(110px, 160px) minmax(0, 1fr) auto", alignItems: "center", gap: 16, padding: "14px 18px", background: "transparent", border: "none", cursor: "pointer", textAlign: "left" }}
                         >
-                          <span style={{ fontSize: 14, fontWeight: 700, color: p.color }}>{p.label}</span>
-                          <span className="mono" style={{ fontSize: 15, fontWeight: 700, color: p.total >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(p.total)}</span>
-                        </div>
-                        <div style={{ background: "#EEF0F7", borderRadius: 5, height: 7, marginBottom: 12, overflow: "hidden" }}>
-                          <div style={{ width: `${barWidth}%`, height: "100%", background: p.total >= 0 ? COLORS.win : COLORS.loss, borderRadius: 5 }} />
-                        </div>
-                        <div className="mono" style={{ display: "flex", gap: 18, fontSize: 12, color: COLORS.textMuted, flexWrap: "wrap", alignItems: "center" }}>
-                          <span>{p.count} trade{p.count === 1 ? "" : "s"}</span>
-                          <span>{p.winRate}% win rate</span>
-                          <span>avg {fmtMoney(p.avg)}</span>
-                          <span>avg {fmtDuration(p.avgDuration)}</span>
-                          <button
-                            type="button"
-                            onClick={() => setExpandedMoodKey(expanded ? null : p.moodKey)}
-                            style={{ background: "none", border: "none", padding: 0, color: COLORS.accent, fontWeight: 600, fontSize: 12, cursor: "pointer" }}
-                          >
-                            {expanded ? "Hide trades ▲" : "Show trades ▼"}
-                          </button>
-                        </div>
+                          <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                            <span style={{ width: 9, height: 9, borderRadius: "50%", background: p.color, flexShrink: 0 }} />
+                            <span style={{ fontSize: 14.5, fontWeight: 700, color: COLORS.text }}>{p.label}</span>
+                          </span>
+                          <span style={{ minWidth: 0 }}>
+                            <span style={{ display: "block", background: COLORS.border, borderRadius: 999, height: 8, overflow: "hidden" }}>
+                              <span style={{ display: "block", width: `${barWidth}%`, height: "100%", background: p.total >= 0 ? COLORS.win : COLORS.loss, borderRadius: 999 }} />
+                            </span>
+                            <span style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12.5, color: COLORS.textMuted, marginTop: 6 }}>
+                              <span>{p.count} trade{p.count === 1 ? "" : "s"}</span>
+                              <span>{p.winRate}% win rate</span>
+                              <span>avg <span className="mono">{fmtMoney(p.avg)}</span></span>
+                              <span>avg {fmtDuration(p.avgDuration)}</span>
+                            </span>
+                          </span>
+                          <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            <span className="display" style={{ fontSize: 17, fontWeight: 700, color: p.total >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(p.total)}</span>
+                            <span aria-hidden="true" style={{ color: COLORS.textMuted, fontSize: 12 }}>{expanded ? "▴" : "▾"}</span>
+                          </span>
+                        </button>
                         {expanded && (
-                          <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${COLORS.border}`, display: "grid", gap: 6 }}>
+                          <div style={{ padding: "0 14px 14px", display: "grid", gap: 4 }}>
                             {p.trades.map((t) => (
                               <div
                                 key={t.id}
                                 onClick={() => openTradeView(t.id)}
-                                className="mono"
-                                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: 12, padding: "6px 10px", background: COLORS.subtleBg, borderRadius: 8, cursor: "pointer" }}
+                                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: 13, padding: "8px 10px", background: COLORS.subtleBg, borderRadius: 10, cursor: "pointer" }}
                               >
-                                <span style={{ color: COLORS.textMuted }}>#{tradeNumberMap.get(t.id)} · {t.date} · {t.symbol || "—"}</span>
-                                <span style={{ fontWeight: 700, color: t.pnl >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(t.pnl)}</span>
+                                <span style={{ display: "flex", gap: 10, color: COLORS.textMuted }}>
+                                  <span className="mono">#{tradeNumberMap.get(t.id)}</span>
+                                  <span className="mono">{t.date}</span>
+                                  <span style={{ color: COLORS.text, fontWeight: 600 }}>{t.symbol || "—"}</span>
+                                </span>
+                                <span className="mono" style={{ fontWeight: 700, color: t.pnl >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(t.pnl)}</span>
                               </div>
                             ))}
                           </div>
@@ -5371,169 +5485,201 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
             )}
           </>
         ) : tab === "friends" ? (
-          <>
-            <form onSubmit={saveNickname} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: COLORS.shadow }}>
-              <div style={{ fontSize: 13, color: COLORS.text, fontWeight: 700 }}>Your nickname</div>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
-                <Field label="Shown to friends instead of your email" style={{ flex: "1 1 220px" }}>
-                  <input type="text" value={nickname} onChange={(e) => { setNickname(e.target.value); setNicknameSavedMsg(false); }} placeholder="e.g. Jerry Smith" style={inputStyle_()} />
-                </Field>
-                <button type="submit" disabled={nicknameBusy} style={{ ...primaryBtnStyle_(), opacity: nicknameBusy ? 0.7 : 1 }}>
-                  {nicknameBusy ? "Saving…" : "Save"}
-                </button>
+          (() => {
+            const nameOf = (f) => (f.otherProfile && (f.otherProfile.display_name || f.otherProfile.email)) || "Unknown";
+            const received = friendships.filter((f) => f.status === "pending" && !f.iAmRequester);
+            const sent = friendships.filter((f) => f.status === "pending" && f.iAmRequester);
+            const subhead = (text, count) => (
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 20px 4px", borderTop: `1px solid ${COLORS.border}`, fontSize: 12.5, fontWeight: 700, color: COLORS.textMuted }}>
+                <span>{text}</span>
+                {count !== undefined && <span>{count}</span>}
               </div>
-              {nicknameError && (
-                <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>
-                  {nicknameError}
+            );
+            const personRow = ({ key, name, sub, onOpen, actions, divider = true }) => (
+              <div key={key} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 20px", borderTop: divider ? `1px solid ${COLORS.border}` : "none", flexWrap: "wrap" }}>
+                <Avatar name={name} />
+                <div style={{ flex: "1 1 160px", minWidth: 0 }}>
+                  {onOpen ? (
+                    <button onClick={onOpen} style={{ background: "transparent", border: "none", padding: 0, fontSize: 14.5, fontWeight: 700, color: COLORS.text, cursor: "pointer", textAlign: "left", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {name}
+                    </button>
+                  ) : (
+                    <div style={{ fontSize: 14.5, fontWeight: 700, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
+                  )}
+                  {sub && <div style={{ fontSize: 12.5, color: COLORS.textMuted, marginTop: 2, display: "flex", gap: 10, flexWrap: "wrap" }}>{sub}</div>}
                 </div>
-              )}
-              {nicknameSavedMsg && !nicknameError && (
-                <div style={{ background: COLORS.winSoft, border: `1px solid ${COLORS.win}33`, color: COLORS.win, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>
-                  Saved.
-                </div>
-              )}
-            </form>
-
-            <form onSubmit={sendFriendRequest} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: COLORS.shadow }}>
-              <div style={{ fontSize: 13, color: COLORS.text, fontWeight: 700 }}>Add a friend</div>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
-                <Field label="Their email" style={{ flex: "1 1 220px" }}>
-                  <input type="email" value={friendEmail} onChange={(e) => setFriendEmail(e.target.value)} placeholder="friend@example.com" style={inputStyle_()} />
-                </Field>
-                <button type="submit" disabled={friendRequestBusy} style={{ ...primaryBtnStyle_(), opacity: friendRequestBusy ? 0.7 : 1 }}>
-                  {friendRequestBusy ? "Sending…" : "Send request"}
-                </button>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>{actions}</div>
               </div>
-              {friendRequestError && (
-                <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>
-                  {friendRequestError}
-                </div>
-              )}
-            </form>
-
-            {friendsLoading ? (
-              <EmptyState text="Loading…" loading />
-            ) : (
-              <>
-                {friendships.filter((f) => f.status === "pending" && !f.iAmRequester).length > 0 && (
-                  <>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>Requests received</div>
-                    <div style={{ display: "grid", gap: 10, marginBottom: 24 }}>
-                      {friendships.filter((f) => f.status === "pending" && !f.iAmRequester).map((f) => (
-                        <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", boxShadow: COLORS.shadow }}>
-                          <div style={{ fontSize: 14, fontWeight: 600 }}>{(f.otherProfile && (f.otherProfile.display_name || f.otherProfile.email)) || "Unknown"}</div>
-                          <div style={{ display: "flex", gap: 8 }}>
-                            <button onClick={() => respondToFriendRequest(f.id, "accepted")} style={primaryBtnStyle_()}>Accept</button>
-                            <button onClick={() => respondToFriendRequest(f.id, "declined")} style={ghostBtnStyle_()}>Decline</button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-
-                {friendships.filter((f) => f.status === "pending" && f.iAmRequester).length > 0 && (
-                  <>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>Requests sent</div>
-                    <div style={{ display: "grid", gap: 10, marginBottom: 24 }}>
-                      {friendships.filter((f) => f.status === "pending" && f.iAmRequester).map((f) => (
-                        <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", boxShadow: COLORS.shadow }}>
-                          <div style={{ fontSize: 14, fontWeight: 600 }}>{(f.otherProfile && (f.otherProfile.display_name || f.otherProfile.email)) || "Unknown"}</div>
-                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                            <span style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600 }}>Pending</span>
-                            <button onClick={() => removeFriendship(f.id)} style={deleteBtnStyle_()} aria-label="Cancel request">✕</button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-
-                <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>Friends</div>
-                {acceptedFriends.length === 0 ? (
-                  <EmptyState text="No friends yet. Add one by email above." />
-                ) : (
-                  <div style={{ display: "grid", gap: 10 }}>
-                    {acceptedFriends.map((f) => (
-                      <div key={f.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", boxShadow: COLORS.shadow }}>
-                        <button
-                          onClick={() => openFriendPerformance(f)}
-                          style={{ background: "transparent", border: "none", padding: 0, fontSize: 14, fontWeight: 600, color: COLORS.text, cursor: "pointer", textAlign: "left" }}
-                        >
-                          {(f.otherProfile && (f.otherProfile.display_name || f.otherProfile.email)) || "Unknown"}
-                        </button>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <button onClick={() => openFriendPerformance(f)} style={ghostBtnStyle_()}>View performance</button>
-                          <button onClick={() => removeFriendship(f.id)} style={ghostBtnStyle_()}>Remove</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
-
-            <div style={{ fontSize: 13, fontWeight: 700, marginTop: 28, marginBottom: 12 }}>Groups</div>
-            <form onSubmit={createGroup} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 16, display: "grid", gap: 12, boxShadow: COLORS.shadow }}>
-              <Field label="Group name">
-                <input type="text" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} placeholder="e.g. ICT Crew" style={inputStyle_()} />
-              </Field>
-              {acceptedFriends.length > 0 && (
-                <Field label="Add friends">
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {acceptedFriends.map((f) => {
-                      const label = (f.otherProfile && (f.otherProfile.display_name || f.otherProfile.email)) || "Unknown";
-                      const active = newGroupMemberIds.includes(f.otherId);
-                      return (
-                        <button
-                          type="button" key={f.id} onClick={() => toggleNewGroupMember(f.otherId)}
-                          style={{
-                            background: active ? COLORS.accentSoft : COLORS.subtleBg,
-                            border: `1.5px solid ${active ? COLORS.accent : COLORS.border}`,
-                            color: active ? COLORS.accent : COLORS.textMuted,
-                            padding: "6px 14px", borderRadius: 20, fontSize: 12.5, fontWeight: 600, cursor: "pointer",
-                          }}
-                        >
-                          {label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </Field>
-              )}
-              <button type="submit" disabled={groupFormBusy} style={{ ...primaryBtnStyle_(), opacity: groupFormBusy ? 0.7 : 1 }}>
-                {groupFormBusy ? "Creating…" : "Create group"}
-              </button>
-              {groupFormError && (
-                <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>
-                  {groupFormError}
-                </div>
-              )}
-            </form>
-
-            {groupsLoading ? (
-              <EmptyState text="Loading…" loading />
-            ) : groupsList.length === 0 ? (
-              <EmptyState text="No groups yet. Create one above with some of your friends." />
-            ) : (
-              <div style={{ display: "grid", gap: 10 }}>
-                {groupsList.map((g) => (
-                  <button
-                    key={g.id}
-                    onClick={() => openGroupModal(g)}
-                    style={{
-                      background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16,
-                      display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-                      boxShadow: COLORS.shadow, cursor: "pointer", textAlign: "left", width: "100%",
-                    }}
+            );
+            const errorBox = (msg) => (
+              <div style={{ margin: "0 20px 14px", background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>{msg}</div>
+            );
+            return (
+              <div className="friends-layout" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.5fr) minmax(280px, 1fr)", gap: 20, alignItems: "start" }}>
+                <div style={{ minWidth: 0 }}>
+                  <SettingsSection
+                    title="Friends"
+                    description="Friends can see each other's trades and stats. Journal entries always stay private."
+                    action={<span style={{ fontSize: 13, fontWeight: 600, color: COLORS.textMuted }}>{acceptedFriends.length} friend{acceptedFriends.length === 1 ? "" : "s"}</span>}
                   >
-                    <span style={{ fontSize: 14, fontWeight: 700, color: COLORS.text }}>{g.name}</span>
-                    <span style={{ fontSize: 12, color: COLORS.textMuted }}>{g.memberIds.length} member{g.memberIds.length === 1 ? "" : "s"}</span>
-                  </button>
-                ))}
+                    <form onSubmit={sendFriendRequest} style={{ display: "flex", gap: 8, padding: "2px 20px 16px" }}>
+                      <input type="email" value={friendEmail} onChange={(e) => setFriendEmail(e.target.value)} placeholder="Friend's email address" aria-label="Friend's email address" style={{ ...inputStyle_(), flex: 1, minWidth: 0 }} />
+                      <button type="submit" disabled={friendRequestBusy} style={{ ...primaryBtnStyle_(), whiteSpace: "nowrap", padding: "9px 16px", fontSize: 13.5, opacity: friendRequestBusy ? 0.7 : 1 }}>
+                        {friendRequestBusy ? "Sending…" : "Send request"}
+                      </button>
+                    </form>
+                    {friendRequestError && errorBox(friendRequestError)}
+
+                    {friendsLoading ? (
+                      <div style={{ padding: "0 20px 20px" }}><EmptyState text="Loading…" loading /></div>
+                    ) : (
+                      <>
+                        {received.length > 0 && (
+                          <>
+                            {subhead("Requests for you", received.length)}
+                            {received.map((f) => personRow({
+                              key: f.id, name: nameOf(f), divider: false,
+                              sub: <span>Wants to be friends</span>,
+                              actions: (
+                                <>
+                                  <button onClick={() => respondToFriendRequest(f.id, "accepted")} style={{ ...primaryBtnStyle_(), padding: "7px 14px", fontSize: 13 }}>Accept</button>
+                                  <button onClick={() => respondToFriendRequest(f.id, "declined")} style={{ ...ghostBtnStyle_(), padding: "7px 12px" }}>Decline</button>
+                                </>
+                              ),
+                            }))}
+                          </>
+                        )}
+                        {sent.length > 0 && (
+                          <>
+                            {subhead("Requests you sent", sent.length)}
+                            {sent.map((f) => personRow({
+                              key: f.id, name: nameOf(f), divider: false,
+                              actions: (
+                                <>
+                                  <StatusPill>Pending</StatusPill>
+                                  <button onClick={() => removeFriendship(f.id)} style={{ ...ghostBtnStyle_(), padding: "6px 11px", color: COLORS.textMuted }} aria-label={`Cancel request to ${nameOf(f)}`}>Cancel</button>
+                                </>
+                              ),
+                            }))}
+                          </>
+                        )}
+                        {subhead("Your friends")}
+                        {acceptedFriends.length === 0 ? (
+                          <div style={{ padding: "6px 20px 20px", fontSize: 13.5, color: COLORS.textMuted }}>No friends yet. Send a request by email above.</div>
+                        ) : (
+                          acceptedFriends.map((f) => {
+                            const stats = friendStats[f.otherId];
+                            const accounts = f.otherProfile ? formatAccounts(f.otherProfile.account_count, f.otherProfile.account_size) : null;
+                            return personRow({
+                              key: f.id, name: nameOf(f), divider: false,
+                              onOpen: () => openFriendPerformance(f),
+                              sub: stats ? (
+                                <>
+                                  <span className="mono" style={{ fontWeight: 700, color: stats.totalPnl >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(stats.totalPnl)}</span>
+                                  <span>{stats.winRate}% win rate</span>
+                                  <span>{stats.tradeCount} trade{stats.tradeCount === 1 ? "" : "s"}</span>
+                                  {accounts && <span>{accounts}</span>}
+                                </>
+                              ) : friendStatsLoading ? <span>Loading stats…</span> : null,
+                              actions: (
+                                <>
+                                  <button onClick={() => openFriendPerformance(f)} style={{ ...ghostBtnStyle_(), padding: "7px 12px" }}>View performance</button>
+                                  <button onClick={() => removeFriendship(f.id)} style={{ ...ghostBtnStyle_(), padding: "7px 12px", color: COLORS.textMuted }}>Remove</button>
+                                </>
+                              ),
+                            });
+                          })
+                        )}
+                        <div style={{ height: 8 }} />
+                      </>
+                    )}
+                  </SettingsSection>
+                </div>
+
+                <div style={{ minWidth: 0 }}>
+                  <SettingsSection title="Your profile" description="Friends see your nickname instead of your email.">
+                    <form onSubmit={saveNickname} style={{ padding: "2px 20px 18px", display: "grid", gap: 10 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <Avatar name={nickname || session.user.email} size={44} />
+                        <input
+                          type="text" value={nickname}
+                          onChange={(e) => { setNickname(e.target.value); setNicknameSavedMsg(false); }}
+                          placeholder="e.g. Jerry Smith" aria-label="Nickname"
+                          style={{ ...inputStyle_(), flex: 1, minWidth: 0 }}
+                        />
+                        <button type="submit" disabled={nicknameBusy} style={{ ...primaryBtnStyle_(), padding: "9px 16px", fontSize: 13.5, opacity: nicknameBusy ? 0.7 : 1 }}>
+                          {nicknameBusy ? "Saving…" : "Save"}
+                        </button>
+                      </div>
+                      {nicknameError && (
+                        <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>{nicknameError}</div>
+                      )}
+                      {nicknameSavedMsg && !nicknameError && (
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: COLORS.win }}>Nickname saved.</div>
+                      )}
+                    </form>
+                  </SettingsSection>
+
+                  <SettingsSection
+                    title="Groups"
+                    description="A shared chat, confluences and patterns with a few friends."
+                  >
+                    {groupsLoading ? (
+                      <div style={{ padding: "0 20px 18px" }}><EmptyState text="Loading…" loading /></div>
+                    ) : groupsList.length === 0 ? (
+                      <div style={{ padding: "2px 20px 16px", fontSize: 13.5, color: COLORS.textMuted }}>No groups yet. Start one below.</div>
+                    ) : (
+                      groupsList.map((g) => (
+                        <button
+                          key={g.id}
+                          onClick={() => openGroupModal(g)}
+                          style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "12px 20px", background: "transparent", border: "none", borderTop: `1px solid ${COLORS.border}`, cursor: "pointer", textAlign: "left" }}
+                        >
+                          <Avatar name={g.name} />
+                          <span style={{ flex: 1, minWidth: 0 }}>
+                            <span style={{ display: "block", fontSize: 14.5, fontWeight: 700, color: COLORS.text }}>{g.name}</span>
+                            <span style={{ display: "block", fontSize: 12.5, color: COLORS.textMuted, marginTop: 2 }}>{g.memberIds.length} member{g.memberIds.length === 1 ? "" : "s"}</span>
+                          </span>
+                          <span aria-hidden="true" style={{ fontSize: 18, color: COLORS.textMuted }}>›</span>
+                        </button>
+                      ))
+                    )}
+                    <form onSubmit={createGroup} style={{ display: "grid", gap: 10, padding: "16px 20px 18px", borderTop: `1px solid ${COLORS.border}`, background: COLORS.subtleBg }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 700 }}>New group</div>
+                      <input type="text" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} placeholder="Group name, e.g. ICT Crew" aria-label="Group name" style={inputStyle_()} />
+                      {acceptedFriends.length > 0 && (
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          {acceptedFriends.map((f) => {
+                            const active = newGroupMemberIds.includes(f.otherId);
+                            return (
+                              <button
+                                type="button" key={f.id} onClick={() => toggleNewGroupMember(f.otherId)} aria-pressed={active}
+                                style={{
+                                  display: "inline-flex", alignItems: "center", gap: 6,
+                                  background: active ? COLORS.accentSoft : COLORS.card,
+                                  border: `1.5px solid ${active ? COLORS.accent : COLORS.borderStrong}`,
+                                  color: active ? COLORS.accent : COLORS.textMuted,
+                                  padding: "5px 12px", borderRadius: 999, fontSize: 12.5, fontWeight: 600, cursor: "pointer",
+                                }}
+                              >
+                                {active ? "✓ " : "+ "}{nameOf(f)}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {groupFormError && (
+                        <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>{groupFormError}</div>
+                      )}
+                      <button type="submit" disabled={groupFormBusy} style={{ ...primaryBtnStyle_(), padding: "9px 16px", fontSize: 13.5, opacity: groupFormBusy ? 0.7 : 1 }}>
+                        {groupFormBusy ? "Creating…" : "Create group"}
+                      </button>
+                    </form>
+                  </SettingsSection>
+                </div>
               </div>
-            )}
-          </>
+            );
+          })()
         ) : tab === "settings" ? (
           (() => {
             const sections = [
@@ -5862,63 +6008,63 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
             )}
           </>
         ) : (
-          <>
-            {entries.length > 0 && (
-              <div style={{ display: "flex", gap: 10, marginBottom: 14, alignItems: "center" }}>
-                <input
-                  type="text"
-                  value={journalSearch}
-                  onChange={(e) => setJournalSearch(e.target.value)}
-                  placeholder="Search journal entries…"
-                  style={{ ...inputStyle_(), flex: "1 1 220px", padding: "6px 12px" }}
-                />
-                {journalSearch && (
-                  <button type="button" onClick={() => setJournalSearch("")} style={ghostBtnStyle_()}>Clear</button>
-                )}
-              </div>
-            )}
-
-            <form onSubmit={addEntry} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: COLORS.shadow }}>
-              <div style={{ fontSize: 13, color: COLORS.text, fontWeight: 700 }}>Journal entry</div>
+          <div className="journal-layout" style={{ display: "grid", gridTemplateColumns: "minmax(300px, 400px) minmax(0, 1fr)", gap: 24, alignItems: "start" }}>
+            <form
+              onSubmit={addEntry}
+              className="journal-composer"
+              style={{
+                position: "sticky", top: 24, maxHeight: "calc(100vh - 48px)", overflowY: "auto",
+                background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 20, padding: 20,
+                display: "grid", gap: 14, boxShadow: COLORS.shadow,
+              }}
+            >
+              <div style={sectionTitleStyle_({ marginBottom: 0 })}>New entry</div>
               <Field label="Date">
-                <input type="date" value={jDate} onChange={(e) => setJDate(e.target.value)} style={inputStyle_()} />
+                <input type="date" value={jDate} onChange={(e) => { jDateTouchedRef.current = true; setJDate(e.target.value); }} style={inputStyle_()} />
               </Field>
-              <Field label="Link to trade (optional)">
+              <Field label="Linked trade">
                 <select value={jLinkedTradeId} onChange={(e) => setJLinkedTradeId(e.target.value)} style={inputStyle_()}>
-                  <option value="">— No trade linked —</option>
+                  <option value="">No trade linked</option>
                   {linkableTrades.map((t) => (
                     <option key={t.id} value={t.id}>{tradeLabel(t)}</option>
                   ))}
                 </select>
               </Field>
               <Field label="How did you feel?">
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-                  {MOODS.map((m) => (
-                    <button
-                      type="button" key={m.key} onClick={() => setJMood(m.key)}
-                      style={{
-                        background: jMood === m.key ? m.color + "1A" : COLORS.subtleBg,
-                        border: `1.5px solid ${jMood === m.key ? m.color : COLORS.border}`,
-                        color: jMood === m.key ? m.color : COLORS.textMuted,
-                        padding: "7px 14px", borderRadius: 20, fontSize: 13, fontWeight: 600, cursor: "pointer",
-                      }}
-                    >
-                      {m.label}
-                    </button>
-                  ))}
+                <div role="group" aria-label="Mood" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {MOODS.map((m) => {
+                    const active = jMood === m.key;
+                    return (
+                      <button
+                        type="button" key={m.key} onClick={() => setJMood(m.key)} aria-pressed={active}
+                        style={{
+                          display: "inline-flex", alignItems: "center", gap: 6,
+                          background: active ? m.color + "1A" : "transparent",
+                          border: `1.5px solid ${active ? m.color : COLORS.borderStrong}`,
+                          color: active ? m.color : COLORS.textMuted,
+                          padding: "6px 12px", borderRadius: 999, fontSize: 13, fontWeight: 600, cursor: "pointer",
+                        }}
+                      >
+                        <span style={{ width: 7, height: 7, borderRadius: "50%", background: m.color }} />
+                        {m.label}
+                      </button>
+                    );
+                  })}
                 </div>
+              </Field>
+              <Field label="What triggered it?">
                 <textarea
                   value={jFeelingDetail}
                   onChange={(e) => setJFeelingDetail(e.target.value)}
-                  placeholder="Go deeper — what triggered it, how it showed up in your trading…"
-                  style={{ ...inputStyle_(), minHeight: 60, resize: "vertical" }}
+                  placeholder="How it showed up in your trading…"
+                  style={{ ...inputStyle_(), minHeight: 64, resize: "vertical", lineHeight: 1.5 }}
                 />
               </Field>
               <Field label="Market conditions">
-                <textarea value={jConditions} onChange={(e) => setJConditions(e.target.value)} placeholder="Choppy pre-CPI, low volume, range-bound…" style={{ ...inputStyle_(), minHeight: 60, resize: "vertical" }} />
+                <textarea value={jConditions} onChange={(e) => setJConditions(e.target.value)} placeholder="Choppy pre-CPI, low volume, range-bound…" style={{ ...inputStyle_(), minHeight: 56, resize: "vertical", lineHeight: 1.5 }} />
               </Field>
               <Field label="Notes">
-                <textarea value={jNotes} onChange={(e) => setJNotes(e.target.value)} placeholder="What happened, what you'd do differently…" style={{ ...inputStyle_(), minHeight: 80, resize: "vertical" }} />
+                <textarea value={jNotes} onChange={(e) => setJNotes(e.target.value)} placeholder="What happened, what you'd do differently…" style={{ ...inputStyle_(), minHeight: 84, resize: "vertical", lineHeight: 1.5 }} />
               </Field>
               {containsCrisisLanguage(jFeelingDetail, jConditions, jNotes) && <CrisisSupportBanner />}
               {journalFormError && (
@@ -5926,67 +6072,98 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                   {journalFormError}
                 </div>
               )}
-              <button type="submit" style={primaryBtnStyle_()}>Save entry</button>
+              <button type="submit" style={{ ...primaryBtnStyle_(), justifySelf: "stretch", textAlign: "center", padding: "11px 18px" }}>Save entry</button>
             </form>
 
-            {(() => {
-              const jq = journalSearch.trim().toLowerCase();
-              const filteredEntries = jq
-                ? entries.filter((en) => [en.feelingDetail, en.conditions, en.notes, moodInfo(en.mood).label].some((v) => (v || "").toLowerCase().includes(jq)))
-                : entries;
-
-              if (entries.length === 0) {
-                return <EmptyState text="No journal entries yet. Write your first one above." />;
-              }
-              if (filteredEntries.length === 0) {
-                return <EmptyState text={`No journal entries match "${journalSearch}".`} />;
-              }
-              return (
-              <div style={{ display: "grid", gap: 10 }}>
-                {[...filteredEntries]
-                  .sort((a, b) => (tradeNumberMap.get(b.tradeId) || -1) - (tradeNumberMap.get(a.tradeId) || -1))
-                  .map((en) => {
-                  const mi = moodInfo(en.mood);
-                  const linkedTrade = en.tradeId ? findTrade(en.tradeId) : null;
-                  return (
-                    <div key={en.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 16, boxShadow: COLORS.shadow }}>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                          <span className="mono" style={{ fontSize: 12.5, color: COLORS.textMuted }}>{en.date}</span>
-                          <span style={{ fontSize: 11, color: mi.color, border: `1px solid ${mi.color}33`, background: mi.color + "14", padding: "2px 9px", borderRadius: 20, fontWeight: 600 }}>
-                            {mi.label}
-                          </span>
-                          {linkedTrade && (
-                            <button
-                              onClick={() => openTradeView(linkedTrade.id)}
-                              style={{ fontSize: 11, color: COLORS.accent, border: `1px solid ${COLORS.accent}33`, background: COLORS.accentSoft, padding: "2px 9px", borderRadius: 20, fontWeight: 600, cursor: "pointer" }}
-                            >
-                              🔗 {tradeLabel(linkedTrade)}
-                            </button>
-                          )}
-                          {en.tradeId && !linkedTrade && (
-                            <span style={{ fontSize: 11, color: COLORS.textMuted, fontStyle: "italic" }}>Linked trade deleted</span>
-                          )}
-                        </div>
-                        <button onClick={() => openEditEntry(en)} style={{ ...deleteBtnStyle_(), marginRight: 4 }} aria-label="Edit entry">✎</button>
-                        <button onClick={() => deleteEntry(en.id)} style={deleteBtnStyle_()} aria-label="Delete entry">✕</button>
-                      </div>
-                      {en.feelingDetail && (
-                        <div style={{ fontSize: 14, color: COLORS.text, lineHeight: 1.5, marginBottom: 6 }}>{en.feelingDetail}</div>
-                      )}
-                      {en.conditions && (
-                        <div style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 6 }}>
-                          <span style={{ color: COLORS.text, fontWeight: 600 }}>Market: </span>{en.conditions}
-                        </div>
-                      )}
-                      {en.notes && <div style={{ fontSize: 14, color: COLORS.text, lineHeight: 1.5 }}>{en.notes}</div>}
-                    </div>
-                  );
-                })}
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+                <div style={sectionTitleStyle_({ marginBottom: 0 })}>
+                  Entries <span style={{ color: COLORS.textMuted, fontWeight: 600 }}>{entries.length}</span>
+                </div>
+                {entries.length > 0 && (
+                  <div style={{ position: "relative", flex: "0 1 300px", minWidth: 180 }}>
+                    <input
+                      type="text"
+                      value={journalSearch}
+                      onChange={(e) => setJournalSearch(e.target.value)}
+                      placeholder="Search entries…"
+                      aria-label="Search journal entries"
+                      style={{ ...inputStyle_(), padding: "8px 34px 8px 12px", fontSize: 13.5 }}
+                    />
+                    {journalSearch && (
+                      <button type="button" onClick={() => setJournalSearch("")} aria-label="Clear search" style={{ ...deleteBtnStyle_(), position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", fontSize: 12 }}>✕</button>
+                    )}
+                  </div>
+                )}
               </div>
-              );
-            })()}
-          </>
+
+              {(() => {
+                const jq = journalSearch.trim().toLowerCase();
+                const filteredEntries = jq
+                  ? entries.filter((en) => [en.feelingDetail, en.conditions, en.notes, moodInfo(en.mood).label].some((v) => (v || "").toLowerCase().includes(jq)))
+                  : entries;
+
+                if (entries.length === 0) {
+                  return <EmptyState text="No journal entries yet. Write your first one on the left." />;
+                }
+                if (filteredEntries.length === 0) {
+                  return <EmptyState text={`No journal entries match "${journalSearch}".`} />;
+                }
+                const iconBtn = { ...deleteBtnStyle_(), width: 32, height: 32, borderRadius: 8, display: "inline-flex", alignItems: "center", justifyContent: "center" };
+                return (
+                  <div style={{ display: "grid", gap: 12 }}>
+                    {[...filteredEntries]
+                      .sort((a, b) => (tradeNumberMap.get(b.tradeId) || -1) - (tradeNumberMap.get(a.tradeId) || -1))
+                      .map((en) => {
+                        const mi = moodInfo(en.mood);
+                        const linkedTrade = en.tradeId ? findTrade(en.tradeId) : null;
+                        const dateLabel = new Date(en.date + "T00:00:00").toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+                        return (
+                          <article key={en.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 18, padding: "16px 18px", boxShadow: COLORS.shadow }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: (en.feelingDetail || en.conditions || en.notes) ? 12 : 0 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", minWidth: 0 }}>
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 700, color: mi.color, background: mi.color + "14", borderRadius: 999, padding: "3px 10px" }}>
+                                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: mi.color }} />
+                                  {mi.label}
+                                </span>
+                                <span style={{ fontSize: 13, color: COLORS.textMuted, fontWeight: 600 }}>{dateLabel}</span>
+                              </div>
+                              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                {linkedTrade && (
+                                  <button
+                                    onClick={() => openTradeView(linkedTrade.id)}
+                                    title="Open the linked trade"
+                                    style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12.5, fontWeight: 700, color: COLORS.text, background: COLORS.subtleBg, border: `1px solid ${COLORS.border}`, padding: "4px 10px", borderRadius: 999, cursor: "pointer", marginRight: 4 }}
+                                  >
+                                    <span className="mono" style={{ color: COLORS.textMuted }}>#{tradeNumberMap.get(linkedTrade.id)}</span>
+                                    {linkedTrade.symbol && <span>{linkedTrade.symbol}</span>}
+                                    <span className="mono" style={{ color: pnlColor(linkedTrade) }}>{fmtMoney(linkedTrade.pnl)}</span>
+                                  </button>
+                                )}
+                                {en.tradeId && !linkedTrade && (
+                                  <span style={{ fontSize: 12, color: COLORS.textMuted, marginRight: 6 }}>Linked trade deleted</span>
+                                )}
+                                <button onClick={() => openEditEntry(en)} style={iconBtn} aria-label="Edit entry">✎</button>
+                                <button onClick={() => deleteEntry(en.id)} style={iconBtn} aria-label="Delete entry">✕</button>
+                              </div>
+                            </div>
+                            {en.feelingDetail && (
+                              <div style={{ fontSize: 15, color: COLORS.text, lineHeight: 1.55, marginBottom: (en.conditions || en.notes) ? 10 : 0, textWrap: "pretty" }}>{en.feelingDetail}</div>
+                            )}
+                            {en.conditions && (
+                              <div style={{ fontSize: 13, color: COLORS.textMuted, lineHeight: 1.5, background: COLORS.subtleBg, borderRadius: 10, padding: "8px 12px", marginBottom: en.notes ? 10 : 0 }}>
+                                <span style={{ color: COLORS.text, fontWeight: 700 }}>Market </span>{en.conditions}
+                              </div>
+                            )}
+                            {en.notes && <div style={{ fontSize: 14, color: COLORS.text, lineHeight: 1.55, textWrap: "pretty" }}>{en.notes}</div>}
+                          </article>
+                        );
+                      })}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
         )}
       </div>
 
@@ -6023,7 +6200,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                 </div>
               )}
 
-              <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>TRADES ({dayTrades.length})</div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>Trades ({dayTrades.length})</div>
               <div style={{ display: "grid", gap: 8, marginBottom: 20 }}>
                 {dayTrades.map((t) => {
                   const linkedEntries = entries.filter((en) => en.tradeId === t.id);
@@ -6050,7 +6227,8 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                       <div className="mono" style={{ fontSize: 11.5, color: COLORS.textMuted, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
                         <span>{fmtDuration(t.duration)}</span>
                         {t.risk !== null && t.risk !== undefined && <span>Risk {t.risk}%</span>}
-                        {t.rr !== null && t.rr !== undefined && <span>{t.rr}R</span>}
+                        {t.rr !== null && t.rr !== undefined && <span>Expected {t.rr}R</span>}
+                        {t.realizedRR !== null && t.realizedRR !== undefined && <span style={{ color: t.realizedRR >= 0 ? COLORS.win : COLORS.loss, fontWeight: 700 }}>Realized {t.realizedRR > 0 ? "+" : ""}{t.realizedRR}R</span>}
                         {t.grade && (
                           <span style={{ color: gradeColor(t.grade), background: gradeColor(t.grade) + "18", border: `1px solid ${gradeColor(t.grade)}40`, borderRadius: 6, padding: "1px 7px", fontWeight: 700 }}>
                             {t.grade}
@@ -6090,7 +6268,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
 
               {dayEntries.length > 0 && (
                 <>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>JOURNAL ENTRIES ({dayEntries.length})</div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>Journal entries ({dayEntries.length})</div>
                   <div style={{ display: "grid", gap: 8 }}>
                     {dayEntries.map((en) => {
                       const mi = moodInfo(en.mood);
@@ -6153,9 +6331,14 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                 <Field label="Risk (%)" style={{ flex: "1 1 130px" }}>
                   <input type="number" step="0.001" min="0" value={editForm.risk} onChange={(e) => setEditForm({ ...editForm, risk: e.target.value })} style={inputStyle_()} className="mono" />
                 </Field>
-                <Field label="R:R" style={{ flex: "1 1 130px" }}>
+                <Field label="Expected R:R" style={{ flex: "1 1 130px" }}>
                   <input type="number" step="0.01" min="0" value={editForm.rr} onChange={(e) => setEditForm({ ...editForm, rr: e.target.value })} style={inputStyle_()} className="mono" />
                 </Field>
+                {(findTrade(editingTradeId) || {}).entryType !== "payout" && (
+                  <Field label="Realized R:R" style={{ flex: "1 1 130px" }}>
+                    <input type="number" step="0.01" value={editForm.realizedRR} onChange={(e) => setEditForm({ ...editForm, realizedRR: e.target.value })} placeholder="e.g. 1.80" style={inputStyle_()} className="mono" />
+                  </Field>
+                )}
                 <Field label="Grade" style={{ flex: "1 1 130px" }}>
                   <select value={editForm.grade} onChange={(e) => setEditForm({ ...editForm, grade: e.target.value })} style={inputStyle_()}>
                     <option value="">—</option>
@@ -6164,11 +6347,11 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                 </Field>
                 <Field label="Followed rules?" style={{ flex: "1 1 130px" }}>
                   <div style={{ display: "flex", gap: 6 }}>
-                    {[["Yes", true], ["No", false], ["—", null]].map(([lbl, val]) => (
+                    {[["Yes", true], ["No", false]].map(([lbl, val]) => (
                       <button
                         key={lbl}
                         type="button"
-                        onClick={() => setEditForm({ ...editForm, rulesFollowed: val })}
+                        onClick={() => setEditForm({ ...editForm, rulesFollowed: editForm.rulesFollowed === val ? null : val })}
                         style={{
                           flex: 1, padding: "9px 0", borderRadius: 8, fontSize: 12.5, fontWeight: 700, cursor: "pointer",
                           border: `1px solid ${editForm.rulesFollowed === val ? COLORS.accent : COLORS.border}`,
@@ -6364,7 +6547,8 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
           { label: "P&L", value: fmtMoney(t.pnl), color: pnlColor(t) },
           { label: "Duration", value: fmtDuration(t.duration) },
           { label: "Risk", value: t.risk !== null && t.risk !== undefined ? `${t.risk}%` : "—" },
-          { label: "R:R", value: t.rr !== null && t.rr !== undefined ? `${t.rr}R` : "—" },
+          { label: "Expected R:R", value: t.rr !== null && t.rr !== undefined ? `${t.rr}R` : "—" },
+          { label: "Realized R:R", value: t.realizedRR !== null && t.realizedRR !== undefined ? `${t.realizedRR > 0 ? "+" : ""}${t.realizedRR}R` : "—" },
           { label: "Grade", value: t.grade || "—", color: t.grade ? gradeColor(t.grade) : null },
           { label: "Confluences", value: tradeConfluenceNames.length ? tradeConfluenceNames.join("\n") : "—" },
           { label: "Targets", value: tradeTargetTagNames.length ? tradeTargetTagNames.join("\n") : "—" },

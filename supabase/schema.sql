@@ -84,6 +84,10 @@ alter table public.trades add column if not exists rules_followed boolean;
 -- and pattern P&L everywhere, since it didn't clearly win or lose.
 alter table public.trades add column if not exists break_even boolean not null default false;
 
+-- realized_rr: the R multiple the trade actually returned (negative for a
+-- loss). The existing `rr` column is the expected/planned R:R.
+alter table public.trades add column if not exists realized_rr numeric;
+
 create index if not exists trades_user_date_idx on public.trades (user_id, date);
 
 alter table public.trades enable row level security;
