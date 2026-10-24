@@ -95,6 +95,10 @@
     .growth-hero { padding: 18px 16px 10px !important; }
     .growth-hero-balance { font-size: 36px !important; }
     .page-title { font-size: 26px !important; }
+    .trade-log-grid, .trade-log-tags { grid-template-columns: 1fr !important; }
+    .trade-shot-stage { min-height: 280px !important; }
+    .settings-layout { grid-template-columns: 1fr !important; }
+    .settings-nav { display: none !important; }
   }
 </style>
 </head>
@@ -830,12 +834,12 @@ function StatStrip({ columns, children, style }) {
 
 // Segmented control for the growth-curve range. `tone="ink"` styles it for
 // the dark dashboard panel.
-function CurveRangeToggle({ value, onChange, options, tone }) {
+function CurveRangeToggle({ value, onChange, options, tone, ariaLabel = "Growth curve range" }) {
   const onInk = tone === "ink";
   return (
     <div
       role="group"
-      aria-label="Growth curve range"
+      aria-label={ariaLabel}
       style={{
         display: "inline-flex", gap: 2, padding: 3, borderRadius: 11,
         background: onInk ? INK_UI.chipBg : COLORS.subtleBg,
@@ -1362,178 +1366,194 @@ function InsightCard({ tone, title, body }) {
   );
 }
 
-// ---- Targets panel content, shared between the docked Settings card and the
-// pop-out floating window so edits (and the live chart underneath) match. ----
-function TargetsPanel({ targets, updateTargets, profitTargetHit, maxLossHit, dailyLossLimitHitToday }) {
+// ---- Settings building blocks ----
+// A settings page is a stack of SettingsSection cards, each a list of
+// SettingsRows: label + hint on the left, the control on the right.
+function SettingsSection({ id, title, description, action, children }) {
+  return (
+    <section id={id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 18, boxShadow: COLORS.shadow, marginBottom: 20, scrollMarginTop: 24, overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, padding: "18px 20px 14px", flexWrap: "wrap" }}>
+        <div style={{ minWidth: 0, flex: "1 1 260px" }}>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: COLORS.text, letterSpacing: "-0.005em" }}>{title}</h2>
+          {description && <div style={{ fontSize: 13, color: COLORS.textMuted, marginTop: 4, lineHeight: 1.5, maxWidth: 520 }}>{description}</div>}
+        </div>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+// `dense` is for the narrow pop-out Targets window: tighter padding, no hints.
+function SettingsRow({ label, hint, status, dense = false, children }) {
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", justifyContent: "space-between", gap: dense ? 10 : 16, flexWrap: "wrap",
+      padding: dense ? "10px 0" : "14px 20px", borderTop: `1px solid ${COLORS.border}`,
+    }}>
+      <div style={{ minWidth: 0, flex: dense ? "1 1 90px" : "1 1 220px" }}>
+        <div style={{ fontSize: dense ? 13 : 14, fontWeight: 600, color: COLORS.text, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {label}{status || null}
+        </div>
+        {hint && !dense && <div style={{ fontSize: 12.5, color: COLORS.textMuted, marginTop: 3, lineHeight: 1.45, maxWidth: 440 }}>{hint}</div>}
+      </div>
+      <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>{children}</div>
+    </div>
+  );
+}
+
+function StatusPill({ tone, children }) {
+  const c = tone === "win" ? COLORS.win : tone === "loss" ? COLORS.loss : tone === "payout" ? COLORS.payout : tone === "accent" ? COLORS.accent : COLORS.textMuted;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 700, color: c, background: c + "1A", borderRadius: 999, padding: "2px 9px" }}>
+      <span style={{ width: 6, height: 6, borderRadius: "50%", background: c }} />
+      {children}
+    </span>
+  );
+}
+
+function MoneyInput({ value, onChange, placeholder = "0.00", ariaLabel, width = 150 }) {
+  return (
+    <div style={{ position: "relative", width }}>
+      <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: COLORS.textMuted, fontSize: 14, fontWeight: 600, pointerEvents: "none" }}>$</span>
+      <input
+        type="number" step="0.01" min="0" value={value} onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder} aria-label={ariaLabel} className="mono"
+        style={{ ...inputStyle_(), paddingLeft: 26 }}
+      />
+    </div>
+  );
+}
+
+// A color picker that shows what it is: a swatch plus the hex value, with
+// the native picker laid invisibly over the top so clicking anywhere opens it.
+function ColorSwatch({ value, fallback, onChange, label }) {
+  const shown = value || fallback;
+  return (
+    <label style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 8, padding: "5px 11px 5px 6px", borderRadius: 999, border: `1.5px solid ${COLORS.borderStrong}`, background: COLORS.card, cursor: "pointer" }}>
+      <span style={{ width: 20, height: 20, borderRadius: "50%", background: shown, boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.14)" }} />
+      <span className="mono" style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted }}>{String(shown).toUpperCase()}</span>
+      <input
+        type="color" value={shown} onChange={(e) => onChange(e.target.value)} aria-label={`${label} color`}
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer", border: "none", padding: 0 }}
+      />
+    </label>
+  );
+}
+
+function Switch({ checked, onChange, disabled = false, label }) {
+  return (
+    <button
+      type="button" role="switch" aria-checked={checked} aria-label={label} disabled={disabled}
+      onClick={() => onChange(!checked)}
+      style={{
+        position: "relative", width: 46, height: 28, borderRadius: 999, border: "none", padding: 0, flexShrink: 0,
+        cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.6 : 1,
+        background: checked ? COLORS.accent : COLORS.borderStrong,
+      }}
+    >
+      <span style={{
+        position: "absolute", top: 3, left: checked ? 21 : 3, width: 22, height: 22, borderRadius: "50%",
+        background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.25)", transition: "left 0.16s ease",
+      }} />
+    </button>
+  );
+}
+
+function smallResetBtn_() {
+  return { ...ghostBtnStyle_(), fontSize: 12, padding: "5px 11px", color: COLORS.textMuted };
+}
+
+const DEFAULT_CHART_STYLE = { axisStep: "", axisColor: "", growthColor: "", profitColor: "#16A34A", minBalanceColor: "#E23D45" };
+const DEFAULT_CALENDAR_COLORS = { calWinColor: "#16A34A", calLossColor: "#E23D45", calPayoutColor: "#0EA5E9" };
+function chartStyleCustomized(t) {
+  return !!(t.axisStep || t.axisColor || t.growthColor || t.profitColor !== DEFAULT_CHART_STYLE.profitColor || t.minBalanceColor !== DEFAULT_CHART_STYLE.minBalanceColor);
+}
+function calendarColorsCustomized(t) {
+  return t.calWinColor !== DEFAULT_CALENDAR_COLORS.calWinColor || t.calLossColor !== DEFAULT_CALENDAR_COLORS.calLossColor || t.calPayoutColor !== DEFAULT_CALENDAR_COLORS.calPayoutColor;
+}
+
+// ---- Targets rows, shared between the Settings page and the pop-out
+// floating window so edits (and the live chart underneath) match. ----
+function TargetRulesRows({ targets, updateTargets, profitTargetHit, maxLossHit, dailyLossLimitHitToday, dense = false }) {
   return (
     <>
-      {/* Profit target */}
-      <div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-          <label style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600 }}>Profit target</label>
-          {profitTargetHit && <span style={{ fontSize: 11, color: COLORS.win, fontWeight: 700 }}>Hit! 🎯</span>}
-        </div>
+      <SettingsRow dense={dense} label="Profit target" hint="Drawn as a green line on your growth curve." status={profitTargetHit ? <StatusPill tone="win">Hit</StatusPill> : null}>
+        <MoneyInput value={targets.profitTarget} onChange={(v) => updateTargets({ profitTarget: v })} ariaLabel="Profit target" width={dense ? 120 : 150} />
+      </SettingsRow>
+      <SettingsRow dense={dense} label="Max loss" hint="Trails your peak balance. Shown as the minimum balance line." status={maxLossHit ? <StatusPill tone="loss">Hit</StatusPill> : null}>
+        <MoneyInput value={targets.maxLoss} onChange={(v) => updateTargets({ maxLoss: v })} ariaLabel="Max loss" width={dense ? 120 : 150} />
+      </SettingsRow>
+      <SettingsRow dense={dense} label="Daily loss limit" hint={'Per account, not combined. Days that hit it are stamped "DLL" on the calendar.'} status={dailyLossLimitHitToday ? <StatusPill tone="loss">Hit today</StatusPill> : null}>
+        <MoneyInput value={targets.dailyLossLimit} onChange={(v) => updateTargets({ dailyLossLimit: v })} ariaLabel="Daily loss limit" width={dense ? 120 : 150} />
+      </SettingsRow>
+    </>
+  );
+}
+
+function ChartStyleRows({ targets, updateTargets, dense = false }) {
+  return (
+    <>
+      <SettingsRow dense={dense} label="$ axis spacing" hint="Gap between the dollar gridlines. Leave empty for automatic.">
         <input
-          type="number" step="0.01" min="0"
-          value={targets.profitTarget}
-          onChange={(e) => updateTargets({ profitTarget: e.target.value })}
-          placeholder="$0.00"
-          className="mono"
-          style={{ ...inputStyle_() }}
+          type="number" step="1" min="0" value={targets.axisStep || ""} onChange={(e) => updateTargets({ axisStep: e.target.value })}
+          placeholder="Auto" aria-label="Dollar axis spacing" className="mono" style={{ ...inputStyle_(), width: dense ? 120 : 150 }}
         />
-      </div>
+      </SettingsRow>
+      <SettingsRow dense={dense} label="Axis labels">
+        <ColorSwatch label="Axis labels" value={targets.axisColor} fallback="#8B8FA3" onChange={(v) => updateTargets({ axisColor: v })} />
+      </SettingsRow>
+      <SettingsRow dense={dense} label="Growth curve" hint="Leave as default to use violet on the dashboard and green or red elsewhere.">
+        <ColorSwatch label="Growth curve" value={targets.growthColor} fallback="#6C4FE0" onChange={(v) => updateTargets({ growthColor: v })} />
+      </SettingsRow>
+      <SettingsRow dense={dense} label="Profit target line">
+        <ColorSwatch label="Profit target line" value={targets.profitColor} fallback="#16A34A" onChange={(v) => updateTargets({ profitColor: v })} />
+      </SettingsRow>
+      <SettingsRow dense={dense} label="Minimum balance line">
+        <ColorSwatch label="Minimum balance line" value={targets.minBalanceColor} fallback="#E23D45" onChange={(v) => updateTargets({ minBalanceColor: v })} />
+      </SettingsRow>
+    </>
+  );
+}
 
-      {/* Max loss */}
-      <div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-          <label style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600 }}>Max loss</label>
-          {maxLossHit && <span style={{ fontSize: 11, color: COLORS.loss, fontWeight: 700 }}>Hit! ⛔</span>}
-        </div>
-        <input
-          type="number" step="0.01" min="0"
-          value={targets.maxLoss}
-          onChange={(e) => updateTargets({ maxLoss: e.target.value })}
-          placeholder="$0.00"
-          className="mono"
-          style={{ ...inputStyle_() }}
-        />
-      </div>
+function CalendarColorRows({ targets, updateTargets, dense = false }) {
+  return (
+    <>
+      <SettingsRow dense={dense} label="Winning days">
+        <ColorSwatch label="Winning days" value={targets.calWinColor} fallback="#16A34A" onChange={(v) => updateTargets({ calWinColor: v })} />
+      </SettingsRow>
+      <SettingsRow dense={dense} label="Losing days">
+        <ColorSwatch label="Losing days" value={targets.calLossColor} fallback="#E23D45" onChange={(v) => updateTargets({ calLossColor: v })} />
+      </SettingsRow>
+      <SettingsRow dense={dense} label="Payouts">
+        <ColorSwatch label="Payouts" value={targets.calPayoutColor} fallback="#0EA5E9" onChange={(v) => updateTargets({ calPayoutColor: v })} />
+      </SettingsRow>
+    </>
+  );
+}
 
-      {/* Daily loss limit — per account, unlike Max loss above which tracks the all-time peak */}
+// Everything above in one compact column, for the pop-out floating window.
+function TargetsPanel({ targets, updateTargets, profitTargetHit, maxLossHit, dailyLossLimitHitToday }) {
+  const groupTitle = { fontSize: 12.5, fontWeight: 700, color: COLORS.textMuted, marginBottom: 2 };
+  return (
+    <>
       <div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-          <label style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600 }}>Daily loss limit</label>
-          {dailyLossLimitHitToday && <span style={{ fontSize: 11, color: COLORS.loss, fontWeight: 700 }}>Hit today ⛔</span>}
-        </div>
-        <input
-          type="number" step="0.01" min="0"
-          value={targets.dailyLossLimit}
-          onChange={(e) => updateTargets({ dailyLossLimit: e.target.value })}
-          placeholder="$0.00 per account"
-          className="mono"
-          style={{ ...inputStyle_() }}
-        />
-        <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 5 }}>
-          Per account, not combined — days that hit it are stamped "DLL" on the calendar.
-        </div>
+        <div style={groupTitle}>Trading rules</div>
+        <TargetRulesRows dense targets={targets} updateTargets={updateTargets} profitTargetHit={profitTargetHit} maxLossHit={maxLossHit} dailyLossLimitHitToday={dailyLossLimitHitToday} />
       </div>
-
-      {/* Axis */}
       <div>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Axis</div>
-        <label style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600, display: "block", marginBottom: 6 }}>$ spacing</label>
-        <input
-          type="number" step="1" min="0"
-          value={targets.axisStep || ""}
-          onChange={(e) => updateTargets({ axisStep: e.target.value })}
-          placeholder="Auto"
-          className="mono"
-          style={{ ...inputStyle_(), marginBottom: 10 }}
-        />
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontSize: 12, color: COLORS.textMuted }}>Color</span>
-          <input
-            type="color"
-            value={targets.axisColor || "#8B8FA3"}
-            onChange={(e) => updateTargets({ axisColor: e.target.value })}
-            style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
-          />
+        <div style={{ ...groupTitle, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          Growth chart
+          {chartStyleCustomized(targets) && <button type="button" onClick={() => updateTargets(DEFAULT_CHART_STYLE)} style={smallResetBtn_()}>Reset</button>}
         </div>
-        {(targets.axisStep || targets.axisColor) && (
-          <button
-            type="button"
-            onClick={() => updateTargets({ axisStep: "", axisColor: "" })}
-            style={{ ...ghostBtnStyle_(), fontSize: 11, padding: "4px 10px", width: "100%", marginTop: 10 }}
-          >
-            Reset axis
-          </button>
-        )}
+        <ChartStyleRows dense targets={targets} updateTargets={updateTargets} />
       </div>
-
-      {/* Colors */}
       <div>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Colors</div>
-        <div style={{ display: "grid", gap: 8 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={{ fontSize: 12, color: COLORS.textMuted }}>Growth curve</span>
-            <input
-              type="color"
-              value={targets.growthColor || "#6C4FE0"}
-              onChange={(e) => updateTargets({ growthColor: e.target.value })}
-              style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
-            />
-          </div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={{ fontSize: 12, color: COLORS.textMuted }}>Profit target</span>
-            <input
-              type="color"
-              value={targets.profitColor || "#16A34A"}
-              onChange={(e) => updateTargets({ profitColor: e.target.value })}
-              style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
-            />
-          </div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={{ fontSize: 12, color: COLORS.textMuted }}>Minimum balance</span>
-            <input
-              type="color"
-              value={targets.minBalanceColor || "#E23D45"}
-              onChange={(e) => updateTargets({ minBalanceColor: e.target.value })}
-              style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
-            />
-          </div>
-          {(targets.growthColor || targets.profitColor !== "#16A34A" || targets.minBalanceColor !== "#E23D45") && (
-            <button
-              type="button"
-              onClick={() => updateTargets({ growthColor: "", profitColor: "#16A34A", minBalanceColor: "#E23D45" })}
-              style={{ ...ghostBtnStyle_(), fontSize: 11, padding: "4px 10px" }}
-            >
-              Reset colors
-            </button>
-          )}
+        <div style={{ ...groupTitle, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          Calendar
+          {calendarColorsCustomized(targets) && <button type="button" onClick={() => updateTargets(DEFAULT_CALENDAR_COLORS)} style={smallResetBtn_()}>Reset</button>}
         </div>
-      </div>
-
-      {/* Calendar */}
-      <div>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Calendar</div>
-        <div style={{ display: "grid", gap: 8 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={{ fontSize: 12, color: COLORS.textMuted }}>Winning days</span>
-            <input
-              type="color"
-              value={targets.calWinColor || "#16A34A"}
-              onChange={(e) => updateTargets({ calWinColor: e.target.value })}
-              style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
-            />
-          </div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={{ fontSize: 12, color: COLORS.textMuted }}>Losing days</span>
-            <input
-              type="color"
-              value={targets.calLossColor || "#E23D45"}
-              onChange={(e) => updateTargets({ calLossColor: e.target.value })}
-              style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
-            />
-          </div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={{ fontSize: 12, color: COLORS.textMuted }}>Payouts</span>
-            <input
-              type="color"
-              value={targets.calPayoutColor || "#0EA5E9"}
-              onChange={(e) => updateTargets({ calPayoutColor: e.target.value })}
-              style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
-            />
-          </div>
-          {(targets.calWinColor !== "#16A34A" || targets.calLossColor !== "#E23D45" || targets.calPayoutColor !== "#0EA5E9") && (
-            <button
-              type="button"
-              onClick={() => updateTargets({ calWinColor: "#16A34A", calLossColor: "#E23D45", calPayoutColor: "#0EA5E9" })}
-              style={{ ...ghostBtnStyle_(), fontSize: 11, padding: "4px 10px" }}
-            >
-              Reset calendar
-            </button>
-          )}
-        </div>
+        <CalendarColorRows dense targets={targets} updateTargets={updateTargets} />
       </div>
     </>
   );
@@ -1870,6 +1890,11 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
   const [tGrade, setTGrade] = useState("");
   const [tRulesFollowed, setTRulesFollowed] = useState(null); // null = not set, true/false = answered
   const [tBreakEven, setTBreakEven] = useState(false);
+  // The chart screenshot staged in the Add Trade form: { file, url } where
+  // url is a local object URL for the preview. Uploaded only on submit.
+  const [tShot, setTShot] = useState(null);
+  const [tShotDragOver, setTShotDragOver] = useState(false);
+  const [tSubmitting, setTSubmitting] = useState(false);
 
   const [sortKey, setSortKey] = useState("date");
   const [tradesSubTab, setTradesSubTab] = useState("all");
@@ -2929,6 +2954,30 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
     fetchJournalInsights(journalFingerprint);
   }, [tab, journalFingerprint]);
 
+  // ⌘V / Ctrl+V anywhere on the Add Trade tab stages a pasted chart image.
+  // Only intercepts pastes that actually carry an image, so pasting text
+  // into the form's inputs still works normally.
+  useEffect(() => {
+    if (tab !== "trades" || tEntryType !== "trade") return;
+    function onPaste(e) {
+      const items = Array.from((e.clipboardData && e.clipboardData.items) || []);
+      const imageItem = items.find((it) => it.kind === "file" && it.type.startsWith("image/"));
+      if (!imageItem) return;
+      const file = imageItem.getAsFile();
+      if (!file) return;
+      e.preventDefault();
+      stageScreenshot(file);
+    }
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [tab, tEntryType]);
+
+  // Free the preview's object URL when it's replaced or the form unmounts.
+  useEffect(() => {
+    if (!tShot) return;
+    return () => URL.revokeObjectURL(tShot.url);
+  }, [tShot]);
+
   if (dataLoading) {
     return (
       <div style={{ display: "flex", minHeight: "100vh", alignItems: "center", justifyContent: "center", background: COLORS.bg, color: COLORS.textMuted, fontFamily: "'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif" }}>
@@ -2937,8 +2986,18 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
     );
   }
 
+  function stageScreenshot(file) {
+    if (!file || !file.type || !file.type.startsWith("image/")) {
+      setTradeFormError("That file isn't an image — use a PNG or JPG chart screenshot.");
+      return;
+    }
+    setTradeFormError(null);
+    setTShot({ file, url: URL.createObjectURL(file) });
+  }
+
   async function addTrade(e) {
     e.preventDefault();
+    if (tSubmitting) return;
     setTradeFormError(null);
     if (tDate === "") { setTradeFormError("Please pick a date."); return; }
     if (tPnl === "" || Number.isNaN(Number(tPnl))) {
@@ -2962,9 +3021,33 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
       rulesFollowed: tEntryType === "trade" ? tRulesFollowed : null,
       breakEven: tEntryType === "trade" ? tBreakEven : false,
     };
+    setTSubmitting(true);
     const { data, error } = await supabaseClient.from("trades").insert(tradeToRow(draft, userId)).select().single();
-    if (error) { setTradeFormError("Couldn't save the trade — try again."); return; }
-    const next = [{ ...rowToTrade(data), media: [] }, ...trades].sort((a, b) => (a.date < b.date ? 1 : -1));
+    if (error) { setTSubmitting(false); setTradeFormError("Couldn't save the trade — try again."); return; }
+
+    // Upload the staged screenshot against the new trade. Done here (not via
+    // addMediaFiles) so the media lands on the trade object before it's put
+    // into state — addMediaFiles reads `trades`, which wouldn't include this
+    // trade yet in this render.
+    const newMedia = [];
+    if (tShot && tEntryType === "trade") {
+      const file = tShot.file;
+      const ext = (file.type.split("/")[1] || "png").replace("jpeg", "jpg");
+      const name = file.name && file.name !== "image.png" ? file.name : `screenshot-${data.date}.${ext}`;
+      const path = mediaPath(userId, data.id, uid(), name);
+      try {
+        await uploadMediaFile(path, file);
+        const { data: mediaRow, error: mediaErr } = await supabaseClient.from("trade_media").insert({
+          trade_id: data.id, user_id: userId, storage_path: path, type: "image", name,
+        }).select().single();
+        if (mediaErr) throw mediaErr;
+        newMedia.push(rowToMedia(mediaRow));
+      } catch (uploadErr) {
+        setSaveError("Trade saved, but the screenshot didn't upload — open the trade and add it from its photos.");
+      }
+    }
+
+    const next = [{ ...rowToTrade(data), media: newMedia }, ...trades].sort((a, b) => (a.date < b.date ? 1 : -1));
     setTrades(next);
 
     if (tConfluenceEntries.length) {
@@ -2990,7 +3073,9 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
       await ensurePattern(distinctConfluenceIds, tTargetTags);
     }
 
-    setSaveError(null);
+    if (!(tShot && tEntryType === "trade" && !newMedia.length)) setSaveError(null);
+    setTShot(null);
+    setTSubmitting(false);
     // Symbol deliberately isn't cleared — you usually log several trades on
     // the same instrument in a row, so it stays put until you type over it.
     setTPnl(""); setTDurH(""); setTDurM(""); setTDurS("");
@@ -4043,7 +4128,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
               {tab === "dashboard" ? "Dashboard" : tab === "trades" ? "Add Trade" : tab === "media" ? "Trades" : tab === "calendar" ? "Performance" : tab === "patterns" ? "Patterns" : tab === "insights" ? "Insights" : tab === "friends" ? "Friends" : tab === "leaderboard" ? "Leaderboard" : tab === "feedback" ? "Feedback" : tab === "settings" ? "Settings" : "Journal"}
             </h1>
             <div style={{ fontSize: 13.5, color: COLORS.textMuted, marginTop: 6 }}>
-              {tab === "dashboard" ? "Your performance and your friends'" : tab === "trades" ? "Log and review every trade" : tab === "media" ? "Every photo and video, across every trade" : tab === "calendar" ? "Account growth and daily/weekly P&L" : tab === "patterns" ? "" : tab === "insights" ? "What your data says you should do next" : tab === "friends" ? "See each other's trades" : tab === "leaderboard" ? "See how you rank, opt-in only" : tab === "feedback" ? "Tell us what to build next" : tab === "settings" ? "Targets and appearance" : "Track how you felt and why"}
+              {tab === "dashboard" ? "Your performance and your friends'" : tab === "trades" ? "Log and review every trade" : tab === "media" ? "Every photo and video, across every trade" : tab === "calendar" ? "Account growth and daily/weekly P&L" : tab === "patterns" ? "" : tab === "insights" ? "What your data says you should do next" : tab === "friends" ? "See each other's trades" : tab === "leaderboard" ? "See how you rank, opt-in only" : tab === "feedback" ? "Tell us what to build next" : tab === "settings" ? "Your plan, trading rules and how the app looks" : "Track how you felt and why"}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
@@ -4218,17 +4303,28 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
           </>
         ) : tab === "trades" ? (
           <>
-            <form onSubmit={addTrade} style={{ position: "relative", background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 24, display: "grid", gap: 14, boxShadow: COLORS.shadow }}>
-              <button
-                type="button"
-                onClick={() => setAccountsPopoverOpen((o) => !o)}
-                title="Multiply each new trade's P&L by an account count"
-                style={{ ...ghostBtnStyle_(), position: "absolute", top: 16, right: 16, padding: "6px 14px", fontSize: 12, borderRadius: 20 }}
-              >
-                {formatAccounts(accountCount, accountSize) || "Accounts"}
-              </button>
+            <form onSubmit={addTrade} style={{ position: "relative", background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 20, padding: 20, marginBottom: 28, display: "grid", gap: 18, boxShadow: COLORS.shadow }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+                  <div style={sectionTitleStyle_({ marginBottom: 0 })}>{tEntryType === "payout" ? "Log a payout" : "Log a trade"}</div>
+                  <CurveRangeToggle
+                    ariaLabel="Entry type"
+                    value={tEntryType}
+                    onChange={setTEntryType}
+                    options={[{ key: "trade", label: "Trade" }, { key: "payout", label: "Payout" }]}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAccountsPopoverOpen((o) => !o)}
+                  title="Multiply each new trade's P&L by an account count"
+                  style={{ ...ghostBtnStyle_(), padding: "6px 14px", fontSize: 12, borderRadius: 20 }}
+                >
+                  {formatAccounts(accountCount, accountSize) || "Accounts"}
+                </button>
+              </div>
               {accountsPopoverOpen && (
-                <div style={{ position: "absolute", top: 52, right: 16, zIndex: 20, background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 16, boxShadow: "0 20px 60px rgba(20,20,35,0.35)", display: "grid", gap: 10, width: 220 }}>
+                <div style={{ position: "absolute", top: 60, right: 20, zIndex: 20, background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 16, boxShadow: "0 20px 60px rgba(20,20,35,0.35)", display: "grid", gap: 10, width: 220 }}>
                   <Field label="Number of accounts">
                     <input
                       type="number" step="0.1" min="0"
@@ -4260,176 +4356,282 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                   </button>
                 </div>
               )}
-              <div style={{ fontSize: 13, color: COLORS.text, fontWeight: 700, paddingRight: 100 }}>Log a trade</div>
-              <div style={{ display: "flex", gap: 6 }}>
-                {[{ v: "trade", label: "Trade" }, { v: "payout", label: "Payouts" }].map((opt) => (
-                  <button
-                    type="button"
-                    key={opt.v}
-                    onClick={() => setTEntryType(opt.v)}
-                    style={{
-                      background: tEntryType === opt.v ? (opt.v === "payout" ? COLORS.payout + "1A" : COLORS.accentSoft) : COLORS.subtleBg,
-                      border: `1.5px solid ${tEntryType === opt.v ? (opt.v === "payout" ? COLORS.payout : COLORS.accent) : COLORS.border}`,
-                      color: tEntryType === opt.v ? (opt.v === "payout" ? COLORS.payout : COLORS.accent) : COLORS.textMuted,
-                      padding: "6px 14px", borderRadius: 20, fontSize: 12.5, fontWeight: 600, cursor: "pointer",
-                    }}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                <Field label="Date" style={{ flex: "1 1 200px" }}>
-                  <input type="date" value={tDate} onChange={(e) => setTDate(e.target.value)} style={inputStyle_()} />
-                </Field>
-                {tEntryType === "trade" && (
-                  <Field label="Symbol (optional)" style={{ flex: "1 1 200px" }}>
-                    <input type="text" value={tSymbol} onChange={(e) => setTSymbol(e.target.value)} placeholder="ES, AAPL…" style={inputStyle_()} />
+
+              {tEntryType === "payout" ? (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, maxWidth: 560 }}>
+                  <Field label="Date">
+                    <input type="date" value={tDate} onChange={(e) => setTDate(e.target.value)} style={inputStyle_()} />
                   </Field>
-                )}
-              </div>
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                <Field label={tEntryType === "payout" ? "Value ($)" : "P&L ($)"} style={{ flex: "1 1 200px" }}>
-                  <input
-                    type="number" step="0.01" min={tEntryType === "payout" ? "0" : undefined} value={tPnl} onChange={(e) => setTPnl(e.target.value)}
-                    placeholder="Enter amount…" className="mono"
-                    style={{ ...inputStyle_(), border: tradeFormError && tPnl === "" ? `1.5px solid ${COLORS.loss}` : inputStyle_().border }}
-                  />
-                </Field>
-                {tEntryType === "trade" && (
-                  <Field label="Duration" style={{ flex: "1 1 200px" }}>
-                    <div style={{ display: "flex", gap: 6 }}>
-                      <input type="number" min="0" value={tDurH} onChange={(e) => setTDurH(e.target.value)} placeholder="0h" style={{ ...inputStyle_(), flex: 1, minWidth: 0 }} className="mono" />
-                      <input type="number" min="0" value={tDurM} onChange={(e) => setTDurM(e.target.value)} placeholder="0m" style={{ ...inputStyle_(), flex: 1, minWidth: 0 }} className="mono" />
-                      <input type="number" min="0" value={tDurS} onChange={(e) => setTDurS(e.target.value)} placeholder="0s" style={{ ...inputStyle_(), flex: 1, minWidth: 0 }} className="mono" />
-                    </div>
-                  </Field>
-                )}
-              </div>
-              {tEntryType === "trade" && (
-                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                  <Field label="Side" style={{ flex: "1 1 130px" }}>
-                    <select value={tSide} onChange={(e) => setTSide(e.target.value)} style={inputStyle_()}>
-                      <option value="long">Long</option>
-                      <option value="short">Short</option>
-                    </select>
-                  </Field>
-                  <Field label="Risk (%)" style={{ flex: "1 1 130px" }}>
-                    <input type="number" step="0.001" min="0" value={tRisk} onChange={(e) => setTRisk(e.target.value)} placeholder="—" style={inputStyle_()} className="mono" />
-                  </Field>
-                  <Field label="R:R" style={{ flex: "1 1 130px" }}>
-                    <input type="number" step="0.01" min="0" value={tRR} onChange={(e) => setTRR(e.target.value)} placeholder="e.g. 2.50" style={inputStyle_()} className="mono" />
-                  </Field>
-                  <Field label="Grade" style={{ flex: "1 1 130px" }}>
-                    <select value={tGrade} onChange={(e) => setTGrade(e.target.value)} style={inputStyle_()}>
-                      <option value="">—</option>
-                      {GRADES.slice().reverse().map((g) => (
-                        <option key={g} value={g}>{g}</option>
-                      ))}
-                    </select>
-                  </Field>
-                  <Field label="Followed rules?" style={{ flex: "1 1 130px" }}>
-                    <div style={{ display: "flex", gap: 6 }}>
-                      {[["Yes", true], ["No", false], ["—", null]].map(([lbl, val]) => (
-                        <button
-                          key={lbl}
-                          type="button"
-                          onClick={() => setTRulesFollowed(val)}
-                          style={{
-                            flex: 1, padding: "9px 0", borderRadius: 8, fontSize: 12.5, fontWeight: 700, cursor: "pointer",
-                            border: `1px solid ${tRulesFollowed === val ? COLORS.accent : COLORS.border}`,
-                            background: tRulesFollowed === val ? COLORS.accentSoft : "transparent",
-                            color: tRulesFollowed === val ? COLORS.accent : COLORS.textMuted,
-                          }}
-                        >
-                          {lbl}
-                        </button>
-                      ))}
-                    </div>
-                  </Field>
-                  <Field label="Break even?" style={{ flex: "1 1 130px" }}>
-                    <button
-                      type="button"
-                      onClick={() => setTBreakEven(!tBreakEven)}
-                      style={{
-                        width: "100%", padding: "9px 0", borderRadius: 8, fontSize: 12.5, fontWeight: 700, cursor: "pointer",
-                        border: `1px solid ${tBreakEven ? COLORS.accent : COLORS.border}`,
-                        background: tBreakEven ? COLORS.accentSoft : "transparent",
-                        color: tBreakEven ? COLORS.accent : COLORS.textMuted,
-                      }}
-                    >
-                      {tBreakEven ? "Yes" : "No"}
-                    </button>
+                  <Field label="Value ($)">
+                    <input
+                      type="number" step="0.01" min="0" value={tPnl} onChange={(e) => setTPnl(e.target.value)}
+                      placeholder="Enter amount…" className="mono"
+                      style={{ ...inputStyle_(), border: tradeFormError && tPnl === "" ? `1.5px solid ${COLORS.loss}` : inputStyle_().border }}
+                    />
                   </Field>
                 </div>
-              )}
-              {tEntryType === "trade" && (
-                <Field label="Confluences (optional)">
-                  {confluencesList.length === 0 ? (
-                    <div style={{ fontSize: 12.5, color: COLORS.textMuted }}>No confluences yet — add some in the Patterns tab.</div>
-                  ) : (
-                    <>
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: tConfluenceEntries.length ? 10 : 0 }}>
-                        <select value={pickConfluenceId} onChange={(e) => setPickConfluenceId(e.target.value)} style={{ ...inputStyle_(), width: "auto" }}>
-                          <option value="">Select confluence…</option>
-                          {confluencesList.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                        </select>
-                        <select value={pickTimeframe} onChange={(e) => setPickTimeframe(e.target.value)} style={{ ...inputStyle_(), width: "auto" }}>
-                          <option value="">Timeframe</option>
-                          {TIMEFRAMES.map((tf) => <option key={tf.value} value={tf.value}>{tf.label}</option>)}
-                        </select>
-                        <button type="button" onClick={addConfluenceEntry} disabled={!pickConfluenceId} style={{ ...ghostBtnStyle_(), opacity: pickConfluenceId ? 1 : 0.5 }}>+ Add</button>
+              ) : (() => {
+                const pnlNum = tPnl === "" || Number.isNaN(Number(tPnl)) ? null : Number(tPnl);
+                const savedPnl = pnlNum === null ? null : pnlNum * (accountCount ? accountCount : 1);
+                const pasteKey = /Mac|iPhone|iPad/i.test((navigator.platform || "") + (navigator.userAgent || "")) ? "⌘V" : "Ctrl+V";
+                // Phones can't paste or drag into a page, so they get one plain instruction.
+                const touchOnly = typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
+                // Dark glass pills/buttons drawn over the screenshot.
+                const stageChip = {
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                  background: "rgba(14,12,30,0.74)", color: INK_UI.text, backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)",
+                  boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.1)", borderRadius: 999, padding: "6px 12px",
+                  fontSize: 12.5, fontWeight: 700, border: "none",
+                };
+                const segBtn = (active, tint) => ({
+                  flex: 1, padding: "9px 0", borderRadius: 9, fontSize: 13, fontWeight: 700, cursor: "pointer",
+                  border: `1.5px solid ${active ? tint : COLORS.borderStrong}`,
+                  background: active ? tint + "1A" : "transparent",
+                  color: active ? tint : COLORS.textMuted,
+                });
+                return (
+                  <>
+                    <div className="trade-log-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.55fr) minmax(300px, 1fr)", gap: 20 }}>
+                      {/* The screenshot is the centre of the form: paste, drop or
+                          choose a chart image; the trade's details are stamped
+                          onto it live as you fill them in. */}
+                      <div
+                        className="trade-shot-stage"
+                        onDragOver={(e) => { e.preventDefault(); if (!tShotDragOver) setTShotDragOver(true); }}
+                        onDragLeave={(e) => { if (e.currentTarget.contains(e.relatedTarget)) return; setTShotDragOver(false); }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setTShotDragOver(false);
+                          const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+                          if (f) stageScreenshot(f);
+                        }}
+                        style={{
+                          position: "relative", borderRadius: 16, overflow: "hidden", minHeight: 340,
+                          background: COLORS.ink,
+                          boxShadow: tShotDragOver ? `inset 0 0 0 2px ${COLORS.accent}` : "inset 0 0 0 1px rgba(255,255,255,0.06)",
+                          transition: "box-shadow 0.15s ease",
+                        }}
+                      >
+                        {tShot ? (
+                          <>
+                            <img
+                              src={tShot.url}
+                              alt="Chart screenshot for this trade"
+                              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain" }}
+                            />
+                            <div style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: 6 }}>
+                              <label style={{ ...stageChip, cursor: "pointer" }}>
+                                Replace
+                                <input type="file" accept="image/*" onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) stageScreenshot(f); e.target.value = ""; }} style={{ display: "none" }} />
+                              </label>
+                              <button type="button" onClick={() => setTShot(null)} style={{ ...stageChip, cursor: "pointer" }}>Remove</button>
+                            </div>
+                            <div style={{ position: "absolute", left: 12, bottom: 12, right: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                              {tSymbol.trim() && <span style={stageChip}>{tSymbol.trim().toUpperCase()}</span>}
+                              <span style={{ ...stageChip, color: tSide === "short" ? INK_UI.loss : INK_UI.win }}>{tSide === "short" ? "Short" : "Long"}</span>
+                              {savedPnl !== null && (
+                                <span className="mono" style={{ ...stageChip, color: savedPnl > 0 ? INK_UI.win : savedPnl < 0 ? INK_UI.loss : INK_UI.text }}>{fmtMoney(savedPnl)}</span>
+                              )}
+                              {tGrade && <span className="display" style={{ ...stageChip, letterSpacing: "-0.01em" }}>{tGrade}</span>}
+                            </div>
+                          </>
+                        ) : (
+                          <label style={{
+                            position: "absolute", inset: 14, borderRadius: 12,
+                            border: `1.5px dashed ${tShotDragOver ? COLORS.accent : "rgba(255,255,255,0.16)"}`,
+                            background: tShotDragOver ? "rgba(150,131,255,0.08)" : "transparent",
+                            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                            gap: 10, cursor: "pointer", textAlign: "center", padding: 24, color: INK_UI.text,
+                          }}>
+                            <svg width="44" height="44" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                              <rect x="3" y="4" width="18" height="16" rx="2.5" stroke={INK_UI.line} strokeWidth="1.6" />
+                              <path d="M6 15.5L9.5 11.5L12.5 14L15 10L18 13" stroke={INK_UI.line} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                            <div className="display" style={{ fontSize: 21, fontWeight: 700 }}>Add your chart screenshot</div>
+                            <div style={{ fontSize: 13.5, color: INK_UI.textMuted, maxWidth: 340, lineHeight: 1.5 }}>
+                              {touchOnly ? (
+                                "Pick a screenshot from your photos. It's saved with the trade."
+                              ) : (
+                                <>Paste it with <span style={{ color: INK_UI.text, fontWeight: 700 }}>{pasteKey}</span>, drag it in, or choose a file. It's saved with the trade.</>
+                              )}
+                            </div>
+                            <span style={{ ...stageChip, marginTop: 6, background: COLORS.accent, boxShadow: "inset 0 1px 0 rgba(255,255,255,0.2)", padding: "8px 16px" }}>Choose image</span>
+                            <input type="file" accept="image/*" onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) stageScreenshot(f); e.target.value = ""; }} style={{ display: "none" }} />
+                          </label>
+                        )}
                       </div>
-                      {tConfluenceEntries.length > 0 && (
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          {tConfluenceEntries.map((entry) => {
-                            const conf = confluencesList.find((c) => c.id === entry.confluenceId);
-                            const tfLabel = entry.timeframe ? TIMEFRAME_LABEL[entry.timeframe] : null;
-                            return (
-                              <span key={entry.localId} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: COLORS.accentSoft, border: `1.5px solid ${COLORS.accent}`, color: COLORS.accent, borderRadius: 20, padding: "6px 8px 6px 14px", fontSize: 12.5, fontWeight: 600 }}>
-                                {conf ? conf.name : "?"}{tfLabel ? ` (${tfLabel})` : ""}
-                                <button type="button" onClick={() => removeConfluenceEntry(entry.localId)} style={{ ...deleteBtnStyle_(), padding: 0, fontSize: 12 }} aria-label="Remove">✕</button>
-                              </span>
-                            );
-                          })}
+
+                      <div style={{ display: "grid", gap: 14, alignContent: "start" }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                          <Field label="Date">
+                            <input type="date" value={tDate} onChange={(e) => setTDate(e.target.value)} style={inputStyle_()} />
+                          </Field>
+                          <Field label="Symbol">
+                            <input type="text" value={tSymbol} onChange={(e) => setTSymbol(e.target.value)} placeholder="MNQ, ES…" style={inputStyle_()} />
+                          </Field>
                         </div>
-                      )}
-                    </>
-                  )}
-                </Field>
-              )}
-              {tEntryType === "trade" && (
-                <Field label="Targets (optional)">
-                  {targetTagsList.length === 0 ? (
-                    <div style={{ fontSize: 12.5, color: COLORS.textMuted }}>No targets yet — add some in the Patterns tab.</div>
-                  ) : (
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      {targetTagsList.map((tg) => {
-                        const active = tTargetTags.includes(tg.id);
-                        return (
-                          <button
-                            type="button" key={tg.id} onClick={() => toggleTargetTag(tg.id)}
+                        <Field label={accountCount && accountCount !== 1 ? `P&L per account ($)` : "P&L ($)"}>
+                          <input
+                            type="number" step="0.01" value={tPnl} onChange={(e) => setTPnl(e.target.value)}
+                            placeholder="0.00" className="display"
                             style={{
-                              background: active ? COLORS.accentSoft : COLORS.subtleBg,
-                              border: `1.5px solid ${active ? COLORS.accent : COLORS.border}`,
-                              color: active ? COLORS.accent : COLORS.textMuted,
-                              padding: "6px 14px", borderRadius: 20, fontSize: 12.5, fontWeight: 600, cursor: "pointer",
+                              ...inputStyle_(), fontSize: 24, fontWeight: 700, padding: "8px 14px",
+                              color: pnlNum === null ? COLORS.text : pnlNum > 0 ? COLORS.win : pnlNum < 0 ? COLORS.loss : COLORS.text,
+                              border: tradeFormError && tPnl === "" ? `1.5px solid ${COLORS.loss}` : inputStyle_().border,
                             }}
-                          >
-                            {tg.name}
-                          </button>
-                        );
-                      })}
+                          />
+                          {accountCount && accountCount !== 1 && savedPnl !== null ? (
+                            <div style={{ fontSize: 12, color: COLORS.textMuted }}>
+                              Saves as <span className="mono" style={{ fontWeight: 700, color: COLORS.text }}>{fmtMoney(savedPnl)}</span> across {accountCount} accounts
+                            </div>
+                          ) : null}
+                        </Field>
+                        <div style={{ display: "grid", gridTemplateColumns: "minmax(110px, 0.8fr) 1.4fr", gap: 10 }}>
+                          <Field label="Side">
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <button type="button" onClick={() => setTSide("long")} aria-pressed={tSide === "long"} style={segBtn(tSide === "long", COLORS.win)}>Long</button>
+                              <button type="button" onClick={() => setTSide("short")} aria-pressed={tSide === "short"} style={segBtn(tSide === "short", COLORS.loss)}>Short</button>
+                            </div>
+                          </Field>
+                          <Field label="Duration">
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <input type="number" min="0" value={tDurH} onChange={(e) => setTDurH(e.target.value)} placeholder="0h" aria-label="Hours" style={{ ...inputStyle_(), flex: 1, minWidth: 0 }} className="mono" />
+                              <input type="number" min="0" value={tDurM} onChange={(e) => setTDurM(e.target.value)} placeholder="0m" aria-label="Minutes" style={{ ...inputStyle_(), flex: 1, minWidth: 0 }} className="mono" />
+                              <input type="number" min="0" value={tDurS} onChange={(e) => setTDurS(e.target.value)} placeholder="0s" aria-label="Seconds" style={{ ...inputStyle_(), flex: 1, minWidth: 0 }} className="mono" />
+                            </div>
+                          </Field>
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                          <Field label="Risk (%)">
+                            <input type="number" step="0.001" min="0" value={tRisk} onChange={(e) => setTRisk(e.target.value)} placeholder="—" style={inputStyle_()} className="mono" />
+                          </Field>
+                          <Field label="R:R">
+                            <input type="number" step="0.01" min="0" value={tRR} onChange={(e) => setTRR(e.target.value)} placeholder="e.g. 2.50" style={inputStyle_()} className="mono" />
+                          </Field>
+                        </div>
+                        <Field label="Grade">
+                          <div role="group" aria-label="Grade" style={{ display: "flex", gap: 5 }}>
+                            {GRADES.map((g) => {
+                              const active = tGrade === g;
+                              const gc = gradeColor(g);
+                              return (
+                                <button
+                                  key={g}
+                                  type="button"
+                                  aria-pressed={active}
+                                  onClick={() => setTGrade(active ? "" : g)}
+                                  className="display"
+                                  style={{
+                                    flex: 1, minWidth: 0, padding: "8px 0", borderRadius: 9, fontSize: 13.5, fontWeight: 700, cursor: "pointer",
+                                    border: `1.5px solid ${active ? gc : COLORS.borderStrong}`,
+                                    background: active ? gc + "1A" : "transparent",
+                                    color: active ? gc : COLORS.textMuted,
+                                  }}
+                                >
+                                  {g}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </Field>
+                        <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 10 }}>
+                          <Field label="Followed rules?">
+                            <div style={{ display: "flex", gap: 6 }}>
+                              {[["Yes", true], ["No", false], ["—", null]].map(([lbl, val]) => (
+                                <button key={lbl} type="button" aria-pressed={tRulesFollowed === val} onClick={() => setTRulesFollowed(val)} style={segBtn(tRulesFollowed === val, COLORS.accent)}>
+                                  {lbl}
+                                </button>
+                              ))}
+                            </div>
+                          </Field>
+                          <Field label="Break even?">
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <button type="button" aria-pressed={!tBreakEven} onClick={() => setTBreakEven(false)} style={segBtn(!tBreakEven, COLORS.accent)}>No</button>
+                              <button type="button" aria-pressed={tBreakEven} onClick={() => setTBreakEven(true)} style={segBtn(tBreakEven, COLORS.accent)}>Yes</button>
+                            </div>
+                          </Field>
+                        </div>
+                      </div>
                     </div>
-                  )}
-                </Field>
-              )}
+
+                    <div className="trade-log-tags" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, paddingTop: 16, borderTop: `1px solid ${COLORS.border}` }}>
+                      <Field label="Confluences">
+                        {confluencesList.length === 0 ? (
+                          <div style={{ fontSize: 12.5, color: COLORS.textMuted }}>No confluences yet — add some in the Patterns tab.</div>
+                        ) : (
+                          <>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: tConfluenceEntries.length ? 10 : 0 }}>
+                              <select value={pickConfluenceId} onChange={(e) => setPickConfluenceId(e.target.value)} style={{ ...inputStyle_(), width: "auto", flex: "1 1 160px" }}>
+                                <option value="">Select confluence…</option>
+                                {confluencesList.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                              </select>
+                              <select value={pickTimeframe} onChange={(e) => setPickTimeframe(e.target.value)} style={{ ...inputStyle_(), width: "auto", flex: "0 1 130px" }}>
+                                <option value="">Timeframe</option>
+                                {TIMEFRAMES.map((tf) => <option key={tf.value} value={tf.value}>{tf.label}</option>)}
+                              </select>
+                              <button type="button" onClick={addConfluenceEntry} disabled={!pickConfluenceId} style={{ ...ghostBtnStyle_(), opacity: pickConfluenceId ? 1 : 0.5 }}>+ Add</button>
+                            </div>
+                            {tConfluenceEntries.length > 0 && (
+                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                {tConfluenceEntries.map((entry) => {
+                                  const conf = confluencesList.find((c) => c.id === entry.confluenceId);
+                                  const tfLabel = entry.timeframe ? TIMEFRAME_LABEL[entry.timeframe] : null;
+                                  return (
+                                    <span key={entry.localId} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: COLORS.accentSoft, border: `1.5px solid ${COLORS.accent}`, color: COLORS.accent, borderRadius: 20, padding: "6px 8px 6px 14px", fontSize: 12.5, fontWeight: 600 }}>
+                                      {conf ? conf.name : "?"}{tfLabel ? ` (${tfLabel})` : ""}
+                                      <button type="button" onClick={() => removeConfluenceEntry(entry.localId)} style={{ ...deleteBtnStyle_(), padding: 0, fontSize: 12 }} aria-label="Remove">✕</button>
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </Field>
+                      <Field label="Targets">
+                        {targetTagsList.length === 0 ? (
+                          <div style={{ fontSize: 12.5, color: COLORS.textMuted }}>No targets yet — add some in the Patterns tab.</div>
+                        ) : (
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {targetTagsList.map((tg) => {
+                              const active = tTargetTags.includes(tg.id);
+                              return (
+                                <button
+                                  type="button" key={tg.id} onClick={() => toggleTargetTag(tg.id)} aria-pressed={active}
+                                  style={{
+                                    background: active ? COLORS.accentSoft : COLORS.subtleBg,
+                                    border: `1.5px solid ${active ? COLORS.accent : COLORS.border}`,
+                                    color: active ? COLORS.accent : COLORS.textMuted,
+                                    padding: "6px 12px", borderRadius: 20, fontSize: 12.5, fontWeight: 600, cursor: "pointer",
+                                  }}
+                                >
+                                  {tg.name}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </Field>
+                    </div>
+                  </>
+                );
+              })()}
+
               {tradeFormError && (
                 <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>
                   {tradeFormError}
                 </div>
               )}
-              <button type="submit" style={primaryBtnStyle_()}>{tEntryType === "payout" ? "Add payout" : "Add trade"}</button>
+              <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+                <button type="submit" disabled={tSubmitting} style={{ ...primaryBtnStyle_(), padding: "12px 26px", fontSize: 15, opacity: tSubmitting ? 0.7 : 1 }}>
+                  {tSubmitting ? (tShot && tEntryType === "trade" ? "Saving trade and screenshot…" : "Saving…") : tEntryType === "payout" ? "Add payout" : "Add trade"}
+                </button>
+                {tEntryType === "trade" && !tSubmitting && (
+                  <span style={{ fontSize: 12.5, color: COLORS.textMuted }}>
+                    {tShot ? "The screenshot will be saved with this trade." : "No screenshot yet — you can still add the trade without one."}
+                  </span>
+                )}
+              </div>
             </form>
 
             <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
@@ -5333,168 +5535,191 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
             )}
           </>
         ) : tab === "settings" ? (
-          <>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 28, alignItems: "start" }}>
-              <div>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                  <span style={sectionTitleStyle_({ marginBottom: 0 })}>Targets</span>
-                  {targetsPopped ? (
-                    <button onClick={() => setTargetsPopped(false)} style={ghostBtnStyle_()}>Dock back here</button>
-                  ) : (
-                    <button onClick={() => { setTargetsPopped(true); setTab("calendar"); }} style={ghostBtnStyle_()}>Pop out to Performance ↗</button>
-                  )}
-                </div>
-                {targetsPopped ? (
-                  <EmptyState text="Targets is popped out as a floating window — drag it around on the Performance tab to watch the chart update live. Click “Dock back here” above to bring it back." />
-                ) : (
-                  <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 18, boxShadow: COLORS.shadow, display: "flex", flexDirection: "column", gap: 16 }}>
-                    <TargetsPanel targets={targets} updateTargets={updateTargets} profitTargetHit={profitTargetHit} maxLossHit={maxLossHit} dailyLossLimitHitToday={!!(dayMap[todayStr()] && dayMap[todayStr()].dllHit)} />
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <div style={sectionTitleStyle_()}>Appearance</div>
-                <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 18, boxShadow: COLORS.shadow, display: "grid", gap: 10 }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <span style={{ fontSize: 13, color: COLORS.textMuted }}>Selected tab</span>
-                    <input
-                      type="color"
-                      value={targets.selectedTabColor || COLORS.sidebarActive}
-                      onChange={(e) => updateTargets({ selectedTabColor: e.target.value })}
-                      style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
-                    />
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <span style={{ fontSize: 13, color: COLORS.textMuted }}>Add Trade button</span>
-                    <input
-                      type="color"
-                      value={targets.addTradeColor || COLORS.accent}
-                      onChange={(e) => updateTargets({ addTradeColor: e.target.value })}
-                      style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
-                    />
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <span style={{ fontSize: 13, color: COLORS.textMuted }}>Dashboard growth panel</span>
-                    <input
-                      type="color"
-                      value={targets.welcomeBannerColor || COLORS.ink}
-                      onChange={(e) => updateTargets({ welcomeBannerColor: e.target.value })}
-                      style={{ width: 32, height: 24, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 0, cursor: "pointer", background: "none" }}
-                    />
-                  </div>
-                  {(targets.selectedTabColor || targets.addTradeColor || targets.welcomeBannerColor) && (
+          (() => {
+            const sections = [
+              { id: "settings-subscription", label: "Subscription" },
+              { id: "settings-rules", label: "Trading rules" },
+              { id: "settings-chart", label: "Growth chart" },
+              { id: "settings-calendar", label: "Calendar" },
+              { id: "settings-appearance", label: "Appearance" },
+              { id: "settings-patterns", label: "Confluences & targets" },
+              { id: "settings-leaderboard", label: "Leaderboard" },
+              { id: "settings-legal", label: "Legal" },
+            ];
+            const fmtLongDate = (d) => new Date(d).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" });
+            const subPill =
+              subscriptionStatus === "active" ? <StatusPill tone="win">Active</StatusPill> :
+              subscriptionStatus === "trialing" ? <StatusPill tone="accent">Free trial</StatusPill> :
+              subscriptionStatus === "past_due" ? <StatusPill tone="loss">Payment past due</StatusPill> :
+              <StatusPill>Canceled</StatusPill>;
+            const subHint =
+              subscriptionStatus === "active" && currentPeriodEnd
+                ? `Renews automatically on ${fmtLongDate(currentPeriodEnd)}. You'll be billed again then unless you cancel before that date.`
+                : subscriptionStatus === "trialing"
+                ? `Your free trial ends ${fmtLongDate(trialEndMs)}, after which it becomes a paid subscription.`
+                : subscriptionStatus === "active"
+                ? "Your subscription is active."
+                : subscriptionStatus === "past_due"
+                ? "Your last payment didn't go through. Update your card in the billing portal to keep access."
+                : "No active subscription.";
+            const appearanceCustomized = !!(targets.selectedTabColor || targets.addTradeColor || targets.welcomeBannerColor);
+            const tagChip = { display: "inline-flex", alignItems: "center", gap: 8, background: COLORS.subtleBg, border: `1px solid ${COLORS.border}`, borderRadius: 999, padding: "6px 8px 6px 14px", fontSize: 13, fontWeight: 600, color: COLORS.text };
+            const tagDelete = { ...deleteBtnStyle_(), width: 22, height: 22, padding: 0, fontSize: 11, borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center" };
+            return (
+              <div className="settings-layout" style={{ display: "grid", gridTemplateColumns: "180px minmax(0, 780px)", gap: 32, alignItems: "start" }}>
+                <nav aria-label="Settings sections" className="settings-nav" style={{ position: "sticky", top: 24, display: "grid", gap: 2 }}>
+                  {sections.map((s) => (
                     <button
+                      key={s.id}
                       type="button"
-                      onClick={() => updateTargets({ selectedTabColor: "", addTradeColor: "", welcomeBannerColor: "" })}
-                      style={{ ...ghostBtnStyle_(), fontSize: 11, padding: "4px 10px" }}
+                      onClick={() => { const el = document.getElementById(s.id); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); }}
+                      style={{ textAlign: "left", background: "transparent", border: "none", borderRadius: 9, padding: "8px 12px", fontSize: 13.5, fontWeight: 600, color: COLORS.textMuted, cursor: "pointer" }}
                     >
-                      Reset appearance colors
+                      {s.label}
                     </button>
+                  ))}
+                </nav>
+
+                <div style={{ minWidth: 0 }}>
+                  <SettingsSection id="settings-subscription" title="Subscription">
+                    <SettingsRow label="A+ Trades" status={subPill} hint={subHint}>
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+                        <button onClick={onManageBilling} disabled={portalBusy} style={{ ...ghostBtnStyle_(), padding: "8px 14px", opacity: portalBusy ? 0.7 : 1 }}>
+                          {portalBusy ? "Opening…" : "Manage subscription"}
+                        </button>
+                        {portalError && <span style={{ fontSize: 11.5, color: COLORS.loss, maxWidth: 220, textAlign: "right" }}>{portalError}</span>}
+                      </div>
+                    </SettingsRow>
+                  </SettingsSection>
+
+                  <SettingsSection
+                    id="settings-rules"
+                    title="Trading rules"
+                    description="Your prop-firm limits. They're drawn on the growth curve and checked against every day on the calendar."
+                    action={!targetsPopped && (
+                      <button onClick={() => { setTargetsPopped(true); setTab("calendar"); }} style={{ ...ghostBtnStyle_(), padding: "7px 12px" }}>
+                        Pop out to Performance ↗
+                      </button>
+                    )}
+                  >
+                    {targetsPopped ? (
+                      <SettingsRow label="Open in a floating window" hint="Targets are popped out on the Performance tab, so you can watch the chart update as you edit. Dock them back to edit here.">
+                        <button onClick={() => setTargetsPopped(false)} style={{ ...ghostBtnStyle_(), padding: "8px 14px" }}>Dock back here</button>
+                      </SettingsRow>
+                    ) : (
+                      <TargetRulesRows targets={targets} updateTargets={updateTargets} profitTargetHit={profitTargetHit} maxLossHit={maxLossHit} dailyLossLimitHitToday={!!(dayMap[todayStr()] && dayMap[todayStr()].dllHit)} />
+                    )}
+                  </SettingsSection>
+
+                  {!targetsPopped && (
+                    <SettingsSection
+                      id="settings-chart"
+                      title="Growth chart"
+                      description="How the account curve looks on the dashboard and the Performance tab."
+                      action={chartStyleCustomized(targets) && <button type="button" onClick={() => updateTargets(DEFAULT_CHART_STYLE)} style={smallResetBtn_()}>Reset to default</button>}
+                    >
+                      <ChartStyleRows targets={targets} updateTargets={updateTargets} />
+                    </SettingsSection>
                   )}
+
+                  {!targetsPopped && (
+                    <SettingsSection
+                      id="settings-calendar"
+                      title="Calendar"
+                      description="Colors for days and payouts on the Performance calendar."
+                      action={calendarColorsCustomized(targets) && <button type="button" onClick={() => updateTargets(DEFAULT_CALENDAR_COLORS)} style={smallResetBtn_()}>Reset to default</button>}
+                    >
+                      <CalendarColorRows targets={targets} updateTargets={updateTargets} />
+                    </SettingsSection>
+                  )}
+
+                  <SettingsSection
+                    id="settings-appearance"
+                    title="Appearance"
+                    action={appearanceCustomized && (
+                      <button type="button" onClick={() => updateTargets({ selectedTabColor: "", addTradeColor: "", welcomeBannerColor: "" })} style={smallResetBtn_()}>
+                        Reset to default
+                      </button>
+                    )}
+                  >
+                    <SettingsRow label="Theme">
+                      <CurveRangeToggle
+                        ariaLabel="Theme"
+                        value={theme}
+                        onChange={(next) => { if (next !== theme) toggleTheme(); }}
+                        options={[{ key: "light", label: "Light" }, { key: "dark", label: "Dark" }]}
+                      />
+                    </SettingsRow>
+                    <SettingsRow label="Selected tab" hint="Highlight for the tab you're on in the sidebar.">
+                      <ColorSwatch label="Selected tab" value={targets.selectedTabColor} fallback={COLORS.sidebarActive} onChange={(v) => updateTargets({ selectedTabColor: v })} />
+                    </SettingsRow>
+                    <SettingsRow label="Add Trade button">
+                      <ColorSwatch label="Add Trade button" value={targets.addTradeColor} fallback={COLORS.accent} onChange={(v) => updateTargets({ addTradeColor: v })} />
+                    </SettingsRow>
+                    <SettingsRow label="Dashboard growth panel" hint="Background of the account panel at the top of the dashboard.">
+                      <ColorSwatch label="Dashboard growth panel" value={targets.welcomeBannerColor} fallback={COLORS.ink} onChange={(v) => updateTargets({ welcomeBannerColor: v })} />
+                    </SettingsRow>
+                  </SettingsSection>
+
+                  <SettingsSection
+                    id="settings-patterns"
+                    title="Confluences & targets"
+                    description="The tags you pick from when logging a trade. Patterns are built automatically from the combinations you tag."
+                  >
+                    {patternFormError && (
+                      <div style={{ margin: "0 20px 14px", background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13 }}>
+                        {patternFormError}
+                      </div>
+                    )}
+                    {[
+                      { key: "conf", title: "Confluences", list: confluencesList, onDelete: deleteConfluence, onSubmit: addConfluence, value: newConfluenceName, setValue: setNewConfluenceName, placeholder: "e.g. IFVG", button: "Add confluence", empty: "No confluences yet. Try IFVG, HTF FVG or CISD." },
+                      { key: "tgt", title: "Targets", list: targetTagsList, onDelete: deleteTargetTag, onSubmit: addTargetTag, value: newTargetTagName, setValue: setNewTargetTagName, placeholder: "e.g. Previous day high", button: "Add target", empty: "No targets yet. Try previous day high or session low." },
+                    ].map((g) => (
+                      <div key={g.key} style={{ padding: "16px 20px 18px", borderTop: `1px solid ${COLORS.border}` }}>
+                        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
+                          <div style={{ fontSize: 14, fontWeight: 600 }}>{g.title}</div>
+                          <div style={{ fontSize: 12.5, color: COLORS.textMuted }}>{g.list.length} saved</div>
+                        </div>
+                        <form onSubmit={g.onSubmit} style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                          <input type="text" value={g.value} onChange={(e) => g.setValue(e.target.value)} placeholder={g.placeholder} aria-label={`New ${g.title.toLowerCase().replace(/s$/, "")} name`} style={{ ...inputStyle_(), flex: 1, minWidth: 0 }} />
+                          <button type="submit" style={{ ...primaryBtnStyle_(), whiteSpace: "nowrap", padding: "9px 16px", fontSize: 13.5 }}>{g.button}</button>
+                        </form>
+                        {g.list.length === 0 ? (
+                          <div style={{ fontSize: 13, color: COLORS.textMuted }}>{g.empty}</div>
+                        ) : (
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {g.list.map((item) => (
+                              <span key={item.id} style={tagChip}>
+                                {item.name}
+                                <button type="button" onClick={() => g.onDelete(item.id)} style={tagDelete} aria-label={`Delete ${item.name}`}>✕</button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </SettingsSection>
+
+                  <SettingsSection id="settings-leaderboard" title="Leaderboard">
+                    <SettingsRow
+                      label="Appear on the global leaderboard"
+                      hint="Opt-in only. Your total P&L, win rate and trade count become visible to everyone. Your individual trades are never shown."
+                    >
+                      <Switch checked={!!leaderboardOptIn} onChange={() => toggleLeaderboardOptIn()} disabled={leaderboardOptInBusy} label="Appear on the global leaderboard" />
+                    </SettingsRow>
+                  </SettingsSection>
+
+                  <SettingsSection id="settings-legal" title="Legal">
+                    {[{ href: "/privacy.html", label: "Privacy Policy" }, { href: "/terms.html", label: "Terms & Conditions" }].map((l) => (
+                      <SettingsRow key={l.href} label={l.label}>
+                        <a href={l.href} target="_blank" rel="noopener" style={{ ...ghostBtnStyle_(), padding: "7px 12px", textDecoration: "none" }}>Open ↗</a>
+                      </SettingsRow>
+                    ))}
+                  </SettingsSection>
                 </div>
               </div>
-            </div>
-
-            <div style={sectionTitleStyle_()}>Subscription</div>
-            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 18, boxShadow: COLORS.shadow, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 28 }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>
-                  {subscriptionStatus === "active" ? "Active" : subscriptionStatus === "trialing" ? "Free trial" : subscriptionStatus === "past_due" ? "Payment past due" : "Canceled"}
-                </div>
-                <div style={{ fontSize: 12.5, color: COLORS.textMuted, maxWidth: 420 }}>
-                  {subscriptionStatus === "active" && currentPeriodEnd
-                    ? `Renews automatically on ${new Date(currentPeriodEnd).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })} — you'll be billed again then unless you cancel before that date.`
-                    : subscriptionStatus === "trialing"
-                    ? `Your free trial ends ${new Date(trialEndMs).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}, after which it becomes a paid subscription.`
-                    : subscriptionStatus === "past_due"
-                    ? "We couldn't process your last payment — update your card in the billing portal to keep access."
-                    : "No active subscription."}
-                </div>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
-                <button onClick={onManageBilling} disabled={portalBusy} style={{ ...ghostBtnStyle_(), opacity: portalBusy ? 0.7 : 1 }}>
-                  {portalBusy ? "Opening…" : "Manage subscription"}
-                </button>
-                {portalError && <span style={{ fontSize: 11.5, color: COLORS.loss, maxWidth: 200, textAlign: "right" }}>{portalError}</span>}
-              </div>
-            </div>
-
-            <div style={sectionTitleStyle_()}>Leaderboard</div>
-            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 18, boxShadow: COLORS.shadow, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 28 }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Appear on the global leaderboard</div>
-                <div style={{ fontSize: 12, color: COLORS.textMuted, maxWidth: 420 }}>
-                  Opt-in only — your total P&L, win rate, and trade count become visible to everyone. Your individual trades are never shown.
-                </div>
-              </div>
-              <button
-                onClick={toggleLeaderboardOptIn}
-                disabled={leaderboardOptInBusy}
-                style={{
-                  ...(leaderboardOptIn ? primaryBtnStyle_() : ghostBtnStyle_()),
-                  opacity: leaderboardOptInBusy ? 0.7 : 1,
-                }}
-              >
-                {leaderboardOptIn ? "Opted in ✓" : "Opt in"}
-              </button>
-            </div>
-
-            <div style={sectionTitleStyle_()}>Pattern configuration</div>
-
-            <div style={{ fontSize: 12.5, fontWeight: 600, color: COLORS.textMuted, marginBottom: 10 }}>Confluences</div>
-            <form onSubmit={addConfluence} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", boxShadow: COLORS.shadow }}>
-              <Field label="New confluence name" style={{ flex: "1 1 220px" }}>
-                <input type="text" value={newConfluenceName} onChange={(e) => setNewConfluenceName(e.target.value)} placeholder="e.g. IFVG" style={inputStyle_()} />
-              </Field>
-              <button type="submit" style={primaryBtnStyle_()}>Add confluence</button>
-            </form>
-            {patternFormError && (
-              <div style={{ background: COLORS.lossSoft, border: `1px solid ${COLORS.loss}33`, color: COLORS.loss, padding: "10px 14px", borderRadius: 10, fontSize: 13, marginBottom: 16 }}>
-                {patternFormError}
-              </div>
-            )}
-
-            {confluencesList.length === 0 ? (
-              <EmptyState text="No confluences yet. Add some above (e.g. IFVG, HTF FVG, CISD), then select them on a trade in Add Trade." />
-            ) : (
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 28 }}>
-                {confluencesList.map((c) => (
-                  <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: COLORS.subtleBg, border: `1.5px solid ${COLORS.border}`, borderRadius: 20, padding: "6px 14px", fontSize: 12.5, fontWeight: 600, color: COLORS.text }}>
-                    {c.name}
-                    <button onClick={() => deleteConfluence(c.id)} style={{ ...deleteBtnStyle_(), padding: 0, fontSize: 12 }} aria-label={`Delete ${c.name}`}>✕</button>
-                  </span>
-                ))}
-              </div>
-            )}
-
-            <div style={{ fontSize: 12.5, fontWeight: 600, color: COLORS.textMuted, marginBottom: 10 }}>Target tags</div>
-            <form onSubmit={addTargetTag} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20, marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", boxShadow: COLORS.shadow }}>
-              <Field label="New target name" style={{ flex: "1 1 220px" }}>
-                <input type="text" value={newTargetTagName} onChange={(e) => setNewTargetTagName(e.target.value)} placeholder="e.g. Previous day high" style={inputStyle_()} />
-              </Field>
-              <button type="submit" style={primaryBtnStyle_()}>Add target</button>
-            </form>
-
-            {targetTagsList.length === 0 ? (
-              <EmptyState text="No targets yet. Add some above, then select them on a trade in Add Trade." />
-            ) : (
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 28 }}>
-                {targetTagsList.map((tg) => (
-                  <span key={tg.id} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: COLORS.subtleBg, border: `1.5px solid ${COLORS.border}`, borderRadius: 20, padding: "6px 14px", fontSize: 12.5, fontWeight: 600, color: COLORS.text }}>
-                    {tg.name}
-                    <button onClick={() => deleteTargetTag(tg.id)} style={{ ...deleteBtnStyle_(), padding: 0, fontSize: 12 }} aria-label={`Delete ${tg.name}`}>✕</button>
-                  </span>
-                ))}
-              </div>
-            )}
-
-            <div style={sectionTitleStyle_()}>Legal</div>
-            <div style={{ display: "flex", gap: 16 }}>
-              <a href="/privacy.html" target="_blank" rel="noopener" style={{ color: COLORS.accent, fontSize: 13, fontWeight: 600 }}>Privacy Policy</a>
-              <a href="/terms.html" target="_blank" rel="noopener" style={{ color: COLORS.accent, fontSize: 13, fontWeight: 600 }}>Terms &amp; Conditions</a>
-            </div>
-          </>
+            );
+          })()
         ) : tab === "leaderboard" ? (
           <>
             {!leaderboardLoading && leaderboardList.length > 0 && (
