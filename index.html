@@ -101,6 +101,9 @@
     .settings-nav { display: none !important; }
     .friends-layout, .journal-layout { grid-template-columns: 1fr !important; }
     .journal-composer { position: static !important; max-height: none !important; }
+    .media-lightbox { flex-direction: column !important; }
+    .media-lightbox-stage { flex: 0 0 46vh !important; padding: 48px 12px 12px !important; }
+    .media-lightbox-info { width: 100% !important; flex: 1 1 auto; padding: 56px 18px 20px !important; }
   }
 </style>
 </head>
@@ -630,11 +633,236 @@ function TradeMediaModal({ trade, onClose, onAddFiles, onDeleteMedia }) {
   );
 }
 
-// All media across every trade, newest trade number first, in an evenly
-// spaced grid — click a tile to open that trade's info popup.
-function AllMediaGrid({ items, onOpenTrade }) {
+function moodOf(key) {
+  return MOODS.find((m) => m.key === key) || MOODS[MOODS.length - 1];
+}
+
+function TinyPill({ color, children, display = false }) {
+  return (
+    <span className={display ? "display" : undefined} style={{ display: "inline-flex", alignItems: "center", fontSize: 12, fontWeight: 700, color, background: color + "1A", borderRadius: 999, padding: "3px 10px" }}>
+      {children}
+    </span>
+  );
+}
+
+// One trade, laid out for reading: the result first, then the numbers, then
+// the tags and the journal. Shared by the trade popup and the full-screen
+// screenshot viewer so a trade always looks the same wherever it's opened.
+function TradeDetails({ trade: t, confluenceNames, targetNames, linkedEntries, onOpenEntry, actions }) {
+  const isPayout = t.entryType === "payout";
+  const has = (v) => v !== null && v !== undefined;
+  const dateLabel = new Date(t.date + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const cells = isPayout ? [] : [
+    { label: "Duration", value: fmtDuration(t.duration) },
+    { label: "Risk", value: has(t.risk) ? `${t.risk}%` : "—" },
+    { label: "Expected R:R", value: has(t.rr) ? `${t.rr}R` : "—" },
+    { label: "Realized R:R", value: has(t.realizedRR) ? `${t.realizedRR > 0 ? "+" : ""}${t.realizedRR}R` : "—", color: t.realizedRR > 0 ? COLORS.win : t.realizedRR < 0 ? COLORS.loss : null },
+    { label: "Followed rules", value: t.rulesFollowed === true ? "Yes" : t.rulesFollowed === false ? "No" : "—", color: t.rulesFollowed === true ? COLORS.win : t.rulesFollowed === false ? COLORS.loss : null },
+    { label: "Break even", value: t.breakEven ? "Yes" : "No" },
+  ];
+  const groupTitle = { fontSize: 12.5, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 };
+  return (
+    <div style={{ display: "grid", gap: 20 }}>
+      <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+          {!isPayout && <span className="display" style={{ fontSize: 20, fontWeight: 800, color: COLORS.text }}>{t.symbol || "No symbol"}</span>}
+          {isPayout
+            ? <TinyPill color={COLORS.payout}>Payout</TinyPill>
+            : <TinyPill color={t.side === "short" ? COLORS.loss : COLORS.win}>{t.side === "short" ? "Short" : "Long"}</TinyPill>}
+          {t.grade && <TinyPill color={gradeColor(t.grade)} display>{t.grade}</TinyPill>}
+        </div>
+        <div className="display" style={{ fontSize: 38, fontWeight: 700, lineHeight: 1.05, color: pnlColor(t) }}>{fmtMoney(t.pnl)}</div>
+        <div style={{ fontSize: 13.5, fontWeight: 600, color: COLORS.textMuted, marginTop: 6 }}>{dateLabel}</div>
+      </div>
+
+      {cells.length > 0 && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 1, background: COLORS.border, borderRadius: 12, overflow: "hidden" }}>
+          {cells.map((c) => (
+            <div key={c.label} style={{ background: COLORS.subtleBg, padding: "10px 12px", minWidth: 0 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.textMuted, marginBottom: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.label}</div>
+              <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: c.color || COLORS.text }}>{c.value}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {confluenceNames.length > 0 && (
+        <div>
+          <div style={groupTitle}>Confluences</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {confluenceNames.map((n, i) => (
+              <span key={i} style={{ fontSize: 12.5, fontWeight: 600, color: COLORS.accent, background: COLORS.accentSoft, borderRadius: 999, padding: "5px 11px" }}>{n}</span>
+            ))}
+          </div>
+        </div>
+      )}
+      {targetNames.length > 0 && (
+        <div>
+          <div style={groupTitle}>Targets</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {targetNames.map((n, i) => (
+              <span key={i} style={{ fontSize: 12.5, fontWeight: 600, color: COLORS.text, border: `1px solid ${COLORS.borderStrong}`, borderRadius: 999, padding: "4px 11px" }}>{n}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {linkedEntries.length > 0 && (
+        <div>
+          <div style={groupTitle}>Journal</div>
+          <div style={{ display: "grid", gap: 8 }}>
+            {linkedEntries.map((en) => {
+              const mi = moodOf(en.mood);
+              const text = en.feelingDetail || en.notes;
+              return (
+                <div
+                  key={en.id}
+                  onClick={onOpenEntry ? () => onOpenEntry(en.id) : undefined}
+                  style={{ background: COLORS.subtleBg, borderRadius: 12, padding: "10px 12px", cursor: onOpenEntry ? "pointer" : "default" }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: text ? 4 : 0 }}>
+                    <span style={{ width: 7, height: 7, borderRadius: "50%", background: mi.color }} />
+                    <span style={{ fontSize: 13, fontWeight: 700, color: mi.color }}>{mi.label}</span>
+                  </div>
+                  {text && <div style={{ fontSize: 13.5, color: COLORS.text, lineHeight: 1.5 }}>{text.length > 180 ? text.slice(0, 180) + "…" : text}</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {actions && <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>{actions}</div>}
+    </div>
+  );
+}
+
+// First screenshot of a trade, shown at the top of its popup. Click to open
+// it full screen.
+function TradeShotThumb({ media, count, onOpen }) {
+  const [url, setUrl] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    setUrl(null);
+    getMediaSignedUrl(media.storagePath).then((u) => { if (!cancelled) setUrl(u); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [media.id]);
+  const cover = { position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" };
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(url)}
+      aria-label="Enlarge screenshot"
+      style={{ position: "relative", display: "block", width: "100%", aspectRatio: "16 / 9", padding: 0, border: "none", borderRadius: 14, overflow: "hidden", background: COLORS.ink, cursor: "zoom-in", marginBottom: 20 }}
+    >
+      {url ? (
+        media.type === "video" ? <video src={url} muted style={cover} /> : <img src={url} alt="Trade screenshot" style={cover} />
+      ) : (
+        <span style={{ color: INK_UI.textMuted, fontSize: 12.5 }}>Loading screenshot…</span>
+      )}
+      <span style={{ position: "absolute", right: 10, bottom: 10, fontSize: 12, fontWeight: 700, color: INK_UI.text, background: "rgba(14,12,30,0.74)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", borderRadius: 999, padding: "5px 11px" }}>
+        {count > 1 ? `Enlarge (${count} files)` : "Enlarge"}
+      </span>
+    </button>
+  );
+}
+
+// Full-screen viewer: the screenshot as large as the screen allows, with the
+// trade's details beside it (below it on phones). ← / → step through the
+// list it was opened from; Esc or a click on the backdrop closes it.
+function MediaLightbox({ items, index, seedUrls, onIndex, onClose, renderInfo }) {
+  const [urls, setUrls] = useState(seedUrls || {});
+  const item = items[index];
+  const itemKey = item ? item.media.id : "";
+
+  useEffect(() => {
+    let cancelled = false;
+    const want = [index, index + 1, index - 1]
+      .filter((i) => i >= 0 && i < items.length)
+      .map((i) => items[i].media)
+      .filter((m) => !urls[m.id]);
+    if (!want.length) return;
+    (async () => {
+      const next = {};
+      for (const m of want) {
+        try { next[m.id] = await getMediaSignedUrl(m.storagePath); } catch (e) { /* skip missing file */ }
+      }
+      if (!cancelled && Object.keys(next).length) setUrls((u) => ({ ...u, ...next }));
+    })();
+    return () => { cancelled = true; };
+  }, [itemKey, items.length]);
+
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key === "Escape") onClose();
+      else if (e.key === "ArrowRight" && index < items.length - 1) onIndex(index + 1);
+      else if (e.key === "ArrowLeft" && index > 0) onIndex(index - 1);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [index, items.length, onClose, onIndex]);
+
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
+  if (!item) return null;
+  const url = urls[item.media.id];
+  const stop = (e) => e.stopPropagation();
+  const navBtn = {
+    position: "absolute", top: "50%", transform: "translateY(-50%)", width: 46, height: 46, borderRadius: "50%",
+    border: "none", background: "rgba(255,255,255,0.1)", color: "#fff", fontSize: 26, lineHeight: 1, cursor: "pointer",
+    display: "flex", alignItems: "center", justifyContent: "center", paddingBottom: 3,
+  };
+  return (
+    <div onClick={onClose} className="media-lightbox" role="dialog" aria-modal="true" aria-label="Screenshot viewer" style={{ position: "fixed", inset: 0, zIndex: 65, background: "rgba(9,8,18,0.97)", display: "flex" }}>
+      <div className="media-lightbox-stage" style={{ flex: 1, minWidth: 0, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", padding: "60px 76px" }}>
+        {url ? (
+          item.media.type === "video" ? (
+            <video key={item.media.id} src={url} controls autoPlay onClick={stop} style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 10 }} />
+          ) : (
+            <img key={item.media.id} src={url} alt={item.media.name || "Trade screenshot"} onClick={stop} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 10, boxShadow: "0 30px 80px rgba(0,0,0,0.55)" }} />
+          )
+        ) : (
+          <div style={{ color: INK_UI.textMuted, fontSize: 14 }}>Loading…</div>
+        )}
+        <div style={{ position: "absolute", top: 20, left: 24, color: INK_UI.textMuted, fontSize: 13, fontWeight: 600 }}>
+          {index + 1} of {items.length}
+        </div>
+        {index > 0 && (
+          <button type="button" onClick={(e) => { stop(e); onIndex(index - 1); }} aria-label="Previous screenshot" style={{ ...navBtn, left: 16 }}>‹</button>
+        )}
+        {index < items.length - 1 && (
+          <button type="button" onClick={(e) => { stop(e); onIndex(index + 1); }} aria-label="Next screenshot" style={{ ...navBtn, right: 16 }}>›</button>
+        )}
+      </div>
+      <aside onClick={stop} className="media-lightbox-info" style={{ width: 400, flexShrink: 0, background: COLORS.card, overflowY: "auto", padding: "64px 26px 26px", position: "relative" }}>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          style={{ position: "absolute", top: 16, right: 16, width: 36, height: 36, borderRadius: "50%", border: "none", background: COLORS.subtleBg, color: COLORS.textMuted, fontSize: 15, cursor: "pointer" }}
+        >
+          ✕
+        </button>
+        <div style={{ position: "absolute", top: 24, left: 26, fontSize: 13, fontWeight: 700, color: COLORS.textMuted }} className="mono">
+          #{item.number}
+        </div>
+        {renderInfo(item)}
+      </aside>
+    </div>
+  );
+}
+
+// Every screenshot across every trade, newest first, as cards: the image on
+// top and the trade it belongs to underneath. Click one to open it full
+// screen with the trade's details.
+function AllMediaGrid({ items, onOpen }) {
   const [urls, setUrls] = useState({});
   const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState("all");
 
   useEffect(() => {
     let cancelled = false;
@@ -651,36 +879,79 @@ function AllMediaGrid({ items, onOpenTrade }) {
     return () => { cancelled = true; };
   }, [items.map((it) => it.media.id).join(",")]);
 
-  if (loading) {
-    return <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "20px 0" }}>Loading…</div>;
+  if (loading && items.length) {
+    return <EmptyState text="Loading…" loading />;
   }
   if (items.length === 0) {
-    return <EmptyState text="No photos or videos attached to any trade yet." />;
+    return <EmptyState text="No screenshots yet. Add one when you log a trade in Add Trade, and it shows up here." />;
   }
+  const shown = items.filter((it) => (filter === "wins" ? it.trade.pnl > 0 : filter === "losses" ? it.trade.pnl < 0 : true));
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
-      {items.map(({ media: m, trade: t, number }) => (
-        <div
-          key={m.id}
-          onClick={() => onOpenTrade(t.id)}
-          style={{ position: "relative", borderRadius: 10, overflow: "hidden", border: `1px solid ${COLORS.border}`, background: "#000", aspectRatio: "1 / 1", cursor: "pointer" }}
-        >
-          {urls[m.id] ? (
-            m.type === "video" ? (
-              <video src={urls[m.id]} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted />
-            ) : (
-              <img src={urls[m.id]} alt={m.name || "trade media"} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-            )
-          ) : (
-            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.textMuted, fontSize: 11 }}>Unavailable</div>
-          )}
-          <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "16px 8px 6px", background: "linear-gradient(to top, rgba(0,0,0,0.75), transparent)", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
-            <span className="mono" style={{ fontSize: 11, fontWeight: 700, color: "#fff" }}>#{number}</span>
-            <span className="mono" style={{ fontSize: 11, fontWeight: 700, color: t.pnl >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(t.pnl)}</span>
-          </div>
+    <>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+        <div style={sectionTitleStyle_({ marginBottom: 0 })}>
+          Screenshots <span style={{ color: COLORS.textMuted, fontWeight: 600 }}>{items.length}</span>
         </div>
-      ))}
-    </div>
+        <CurveRangeToggle
+          ariaLabel="Filter screenshots"
+          value={filter}
+          onChange={setFilter}
+          options={[{ key: "all", label: "All" }, { key: "wins", label: "Wins" }, { key: "losses", label: "Losses" }]}
+        />
+      </div>
+      {shown.length === 0 ? (
+        <EmptyState text={filter === "wins" ? "No screenshots on winning trades yet." : "No screenshots on losing trades yet."} />
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 260px), 1fr))", gap: 16 }}>
+          {shown.map(({ media: m, trade: t, number }, i) => {
+            const dateLabel = new Date(t.date + "T00:00:00").toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+            return (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => onOpen(shown, i, urls)}
+                aria-label={`Open screenshot for trade #${number}`}
+                style={{ display: "block", width: "100%", padding: 0, textAlign: "left", background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, overflow: "hidden", boxShadow: COLORS.shadow, cursor: "zoom-in" }}
+              >
+                <div style={{ position: "relative", aspectRatio: "16 / 10", background: COLORS.ink }}>
+                  {urls[m.id] ? (
+                    m.type === "video" ? (
+                      <video src={urls[m.id]} muted style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                    ) : (
+                      <img src={urls[m.id]} alt={m.name || "Trade screenshot"} loading="lazy" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                    )
+                  ) : (
+                    <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: INK_UI.textMuted, fontSize: 12 }}>Unavailable</div>
+                  )}
+                  {m.type === "video" && (
+                    <span style={{ position: "absolute", top: 10, left: 10, fontSize: 11.5, fontWeight: 700, color: "#fff", background: "rgba(14,12,30,0.74)", borderRadius: 999, padding: "3px 9px" }}>▶ Video</span>
+                  )}
+                </div>
+                <div style={{ padding: "12px 14px" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                      <span className="mono" style={{ fontSize: 12.5, fontWeight: 700, color: COLORS.textMuted }}>#{number}</span>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.symbol || "No symbol"}</span>
+                      <span style={{ fontSize: 11.5, fontWeight: 700, color: t.side === "short" ? COLORS.loss : COLORS.win }}>{t.side === "short" ? "Short" : "Long"}</span>
+                    </div>
+                    <span className="display" style={{ fontSize: 16, fontWeight: 700, color: pnlColor(t), whiteSpace: "nowrap" }}>{fmtMoney(t.pnl)}</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 6, fontSize: 12.5, color: COLORS.textMuted, fontWeight: 600 }}>
+                    <span>{dateLabel}</span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      {t.realizedRR !== null && t.realizedRR !== undefined && (
+                        <span className="mono" style={{ color: t.realizedRR >= 0 ? COLORS.win : COLORS.loss }}>{t.realizedRR > 0 ? "+" : ""}{t.realizedRR}R</span>
+                      )}
+                      {t.grade && <span className="display" style={{ fontWeight: 800, color: gradeColor(t.grade) }}>{t.grade}</span>}
+                    </span>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -1694,23 +1965,25 @@ function DraggablePopup({ title, onClose, children, defaultX, defaultY, width = 
       style={{
         position: "fixed", left: pos.x, top: pos.y, zIndex: 55, width,
         maxWidth: "calc(100vw - 40px)", maxHeight: "85vh", overflowY: "auto",
-        background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16,
-        boxShadow: "0 20px 60px rgba(20,20,35,0.35)",
+        background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 18,
+        boxShadow: "0 1px 2px rgba(15,10,40,0.08), 0 24px 60px -12px rgba(15,10,40,0.45)",
       }}
     >
       <div
         onMouseDown={startDrag}
         style={{
           cursor: "grab", display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "10px 16px", borderBottom: `1px solid ${COLORS.border}`,
-          fontWeight: 700, fontSize: 12.5, color: COLORS.textMuted, userSelect: "none", background: COLORS.subtleBg,
-          borderTopLeftRadius: 16, borderTopRightRadius: 16,
+          padding: "10px 12px 10px 18px", borderBottom: `1px solid ${COLORS.border}`,
+          fontWeight: 700, fontSize: 13.5, color: COLORS.text, userSelect: "none", background: COLORS.card,
+          borderTopLeftRadius: 18, borderTopRightRadius: 18, position: "sticky", top: 0, zIndex: 1,
         }}
       >
-        <span>⠿ {title}</span>
-        <button onClick={onClose} style={deleteBtnStyle_()} aria-label="Close">✕</button>
+        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span aria-hidden="true" style={{ color: COLORS.textMuted, fontSize: 12 }}>⠿</span>{title}
+        </span>
+        <button onClick={onClose} style={{ ...deleteBtnStyle_(), width: 32, height: 32, borderRadius: 8 }} aria-label="Close">✕</button>
       </div>
-      <div style={{ padding: 24 }}>
+      <div style={{ padding: "20px 22px 22px" }}>
         {children}
       </div>
     </div>
@@ -1944,6 +2217,8 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
   const [selectedDay, setSelectedDay] = useState(null);
   const [mediaModalTradeId, setMediaModalTradeId] = useState(null);
   const [viewTradeId, setViewTradeId] = useState(null);
+  // Full-screen screenshot viewer: { items: [{ media, trade, number }], index, seedUrls }
+  const [lightbox, setLightbox] = useState(null);
   const [viewEntryId, setViewEntryId] = useState(null);
   const tradePopupNodeRef = useRef(null);
   const entryPopupNodeRef = useRef(null);
@@ -3212,6 +3487,26 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
   // always shows the trade's own popup together with its linked journal
   // entry's popup (if any), in one click, instead of requiring a second
   // click to also see the journal side.
+  // Names of the confluences / targets tagged on a trade, plus its journal
+  // entries — what TradeDetails needs to describe it.
+  function tradeDetailsFor(t) {
+    const confluenceNames = tradeConfluenceLinks
+      .filter((l) => l.trade_id === t.id)
+      .map((l) => {
+        const conf = confluencesList.find((c) => c.id === l.confluence_id);
+        if (!conf) return null;
+        const tfLabel = l.timeframe ? TIMEFRAME_LABEL[l.timeframe] || l.timeframe : null;
+        return tfLabel ? `${conf.name} (${tfLabel})` : conf.name;
+      })
+      .filter(Boolean);
+    const targetNames = tradeTargetTagLinks
+      .filter((l) => l.trade_id === t.id)
+      .map((l) => { const tg = targetTagsList.find((x) => x.id === l.target_tag_id); return tg ? tg.name : null; })
+      .filter(Boolean);
+    const linkedEntries = entries.filter((en) => en.tradeId === t.id);
+    return { confluenceNames, targetNames, linkedEntries };
+  }
+
   function openTradeView(tradeId) {
     setViewTradeId(tradeId);
     const linked = entries.find((en) => en.tradeId === tradeId);
@@ -4196,7 +4491,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
               {tab === "dashboard" ? "Dashboard" : tab === "trades" ? "Add Trade" : tab === "media" ? "Trades" : tab === "calendar" ? "Performance" : tab === "patterns" ? "Patterns" : tab === "insights" ? "Insights" : tab === "friends" ? "Friends" : tab === "leaderboard" ? "Leaderboard" : tab === "feedback" ? "Feedback" : tab === "settings" ? "Settings" : "Journal"}
             </h1>
             <div style={{ fontSize: 13.5, color: COLORS.textMuted, marginTop: 6 }}>
-              {tab === "dashboard" ? "Your performance and your friends'" : tab === "trades" ? "Log and review every trade" : tab === "media" ? "Every photo and video, across every trade" : tab === "calendar" ? "Account growth and daily/weekly P&L" : tab === "patterns" ? "" : tab === "insights" ? "What your data says you should do next" : tab === "friends" ? "See each other's trades" : tab === "leaderboard" ? "See how you rank, opt-in only" : tab === "feedback" ? "Tell us what to build next" : tab === "settings" ? "Your plan, trading rules and how the app looks" : "Track how you felt and why"}
+              {tab === "dashboard" ? "Your performance and your friends'" : tab === "trades" ? "Log and review every trade" : tab === "media" ? "Your trade screenshots, newest first. Click one to enlarge it." : tab === "calendar" ? "Account growth and daily/weekly P&L" : tab === "patterns" ? "" : tab === "insights" ? "What your data says you should do next" : tab === "friends" ? "See each other's trades" : tab === "leaderboard" ? "See how you rank, opt-in only" : tab === "feedback" ? "Tell us what to build next" : tab === "settings" ? "Your plan, trading rules and how the app looks" : "Track how you felt and why"}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
@@ -4898,7 +5193,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
           </>
         ) : tab === "media" ? (
           <>
-            <AllMediaGrid items={allMediaItems} onOpenTrade={openTradeView} />
+            <AllMediaGrid items={allMediaItems} onOpen={(items, index, seedUrls) => setLightbox({ items, index, seedUrls })} />
           </>
         ) : tab === "calendar" ? (
           <>
@@ -6526,88 +6821,42 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
       {viewTradeId && (() => {
         const t = findTrade(viewTradeId);
         if (!t) return null;
-        const tradeConfluenceNames = tradeConfluenceLinks
-          .filter((l) => l.trade_id === t.id)
-          .map((l) => {
-            const conf = confluencesList.find((c) => c.id === l.confluence_id);
-            if (!conf) return null;
-            const tfLabel = l.timeframe ? TIMEFRAME_LABEL[l.timeframe] || l.timeframe : null;
-            return tfLabel ? `${conf.name} (${tfLabel})` : conf.name;
-          })
-          .filter(Boolean);
-        const tradeTargetTagNames = tradeTargetTagLinks
-          .filter((l) => l.trade_id === t.id)
-          .map((l) => { const tg = targetTagsList.find((x) => x.id === l.target_tag_id); return tg ? tg.name : null; })
-          .filter(Boolean);
-        const linkedEntries = entries.filter((en) => en.tradeId === t.id);
-        const fields = [
-          { label: "Date", value: t.date },
-          { label: "Symbol", value: t.symbol || "—" },
-          { label: "Side", value: t.side === "short" ? "Short" : "Long" },
-          { label: "P&L", value: fmtMoney(t.pnl), color: pnlColor(t) },
-          { label: "Duration", value: fmtDuration(t.duration) },
-          { label: "Risk", value: t.risk !== null && t.risk !== undefined ? `${t.risk}%` : "—" },
-          { label: "Expected R:R", value: t.rr !== null && t.rr !== undefined ? `${t.rr}R` : "—" },
-          { label: "Realized R:R", value: t.realizedRR !== null && t.realizedRR !== undefined ? `${t.realizedRR > 0 ? "+" : ""}${t.realizedRR}R` : "—" },
-          { label: "Grade", value: t.grade || "—", color: t.grade ? gradeColor(t.grade) : null },
-          { label: "Confluences", value: tradeConfluenceNames.length ? tradeConfluenceNames.join("\n") : "—" },
-          { label: "Targets", value: tradeTargetTagNames.length ? tradeTargetTagNames.join("\n") : "—" },
-        ];
+        const details = tradeDetailsFor(t);
+        const number = tradeNumberMap.get(t.id);
+        const mediaItems = (t.media || []).map((m) => ({ media: m, trade: t, number }));
+        const mediaCount = mediaItems.length;
         return (
           <DraggablePopup
-            title={t.entryType === "payout" ? "Payout" : `Trade #${tradeNumberMap.get(t.id)}`}
+            title={t.entryType === "payout" ? "Payout" : `Trade #${number}`}
             onClose={() => setViewTradeId(null)}
             defaultX={Math.max(20, (window.innerWidth - 940) / 2)}
             defaultY={90}
             exposeRef={tradePopupNodeRef}
           >
-            <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: pnlColor(t), marginBottom: 18 }}>{fmtMoney(t.pnl)}</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 18 }}>
-              {fields.map((f) => (
-                <div key={f.label}>
-                  <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>{f.label.toUpperCase()}</div>
-                  <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: f.color || COLORS.text, whiteSpace: "pre-line" }}>{f.value}</div>
-                </div>
-              ))}
-            </div>
-            {linkedEntries.length > 0 && (
-              <div style={{ marginBottom: 18, display: "grid", gap: 10 }}>
-                <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600 }}>Journal</div>
-                {linkedEntries.map((en) => {
-                  const mi = moodInfo(en.mood);
-                  return (
-                    <div
-                      key={en.id}
-                      onClick={() => setViewEntryId(en.id)}
-                      style={{ background: COLORS.subtleBg, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "10px 12px", cursor: "pointer" }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: (en.feelingDetail || en.notes) ? 4 : 0 }}>
-                        <span style={{ fontSize: 12.5, fontWeight: 700, color: mi.color }}>{mi.label}</span>
-                      </div>
-                      {(en.feelingDetail || en.notes) && (
-                        <div style={{ fontSize: 12.5, color: COLORS.text }}>
-                          {(en.feelingDetail || en.notes).slice(0, 140)}{(en.feelingDetail || en.notes).length > 140 ? "…" : ""}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+            {mediaCount > 0 && (
+              <TradeShotThumb
+                media={mediaItems[0].media}
+                count={mediaCount}
+                onOpen={(url) => setLightbox({ items: mediaItems, index: 0, seedUrls: url ? { [mediaItems[0].media.id]: url } : {} })}
+              />
             )}
-            <div style={{ display: "flex", gap: 10 }}>
-              <button
-                onClick={() => { setViewTradeId(null); openEditTrade(t); }}
-                style={{ ...primaryBtnStyle_(), flex: 1, textAlign: "center" }}
-              >
-                ✎ Edit trade
-              </button>
-              <button
-                onClick={() => { setViewTradeId(null); setMediaModalTradeId(t.id); }}
-                style={{ ...ghostBtnStyle_(), flex: 1 }}
-              >
-                📎 {(t.media || []).length ? `View ${(t.media || []).length} attachment${(t.media || []).length === 1 ? "" : "s"}` : "Add photos/videos"}
-              </button>
-            </div>
+            <TradeDetails
+              trade={t}
+              confluenceNames={details.confluenceNames}
+              targetNames={details.targetNames}
+              linkedEntries={details.linkedEntries}
+              onOpenEntry={(id) => setViewEntryId(id)}
+              actions={
+                <>
+                  <button onClick={() => { setViewTradeId(null); openEditTrade(t); }} style={{ ...primaryBtnStyle_(), flex: 1, textAlign: "center" }}>
+                    Edit trade
+                  </button>
+                  <button onClick={() => { setViewTradeId(null); setMediaModalTradeId(t.id); }} style={{ ...ghostBtnStyle_(), flex: 1, padding: "10px 14px", fontSize: 13.5 }}>
+                    {mediaCount ? `Photos & videos (${mediaCount})` : "Add photos or videos"}
+                  </button>
+                </>
+              }
+            />
           </DraggablePopup>
         );
       })()}
@@ -6617,12 +6866,8 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
         if (!en) return null;
         const mi = moodInfo(en.mood);
         const linkedTrade = en.tradeId ? findTrade(en.tradeId) : null;
-        const fields = [
-          { label: "Date", value: en.date },
-          { label: "Mood", value: mi.label, color: mi.color },
-          { label: "Conditions", value: en.conditions || "—" },
-          { label: "Linked trade", value: linkedTrade ? `#${tradeNumberMap.get(linkedTrade.id)} · ${fmtMoney(linkedTrade.pnl)}` : "—", color: linkedTrade ? pnlColor(linkedTrade) : null },
-        ];
+        const dateLabel = new Date(en.date + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+        const blockTitle = { fontSize: 12.5, fontWeight: 700, color: COLORS.textMuted, marginBottom: 6 };
         return (
           <DraggablePopup
             title="Journal entry"
@@ -6631,44 +6876,101 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
             defaultY={90}
             exposeRef={entryPopupNodeRef}
           >
-            <div style={{ fontSize: 20, fontWeight: 700, color: mi.color, marginBottom: 18 }}>{mi.label}</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 18 }}>
-              {fields.map((f) => (
-                <div key={f.label}>
-                  <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>{f.label.toUpperCase()}</div>
-                  <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: f.color || COLORS.text }}>{f.value}</div>
+            <div style={{ display: "grid", gap: 18 }}>
+              <div>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 15, fontWeight: 700, color: mi.color, background: mi.color + "14", borderRadius: 999, padding: "5px 14px" }}>
+                  <span style={{ width: 9, height: 9, borderRadius: "50%", background: mi.color }} />
+                  {mi.label}
+                </span>
+                <div style={{ fontSize: 13.5, fontWeight: 600, color: COLORS.textMuted, marginTop: 10 }}>{dateLabel}</div>
+              </div>
+
+              {linkedTrade ? (
+                <button
+                  onClick={() => openTradeView(linkedTrade.id)}
+                  title="Open the linked trade"
+                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%", background: COLORS.subtleBg, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: "10px 14px", cursor: "pointer", textAlign: "left" }}
+                >
+                  <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                    <span className="mono" style={{ fontSize: 12.5, fontWeight: 700, color: COLORS.textMuted }}>#{tradeNumberMap.get(linkedTrade.id)}</span>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: COLORS.text }}>{linkedTrade.symbol || "No symbol"}</span>
+                    {linkedTrade.entryType !== "payout" && (
+                      <span style={{ fontSize: 12, fontWeight: 700, color: linkedTrade.side === "short" ? COLORS.loss : COLORS.win }}>{linkedTrade.side === "short" ? "Short" : "Long"}</span>
+                    )}
+                  </span>
+                  <span className="display" style={{ fontSize: 16, fontWeight: 700, color: pnlColor(linkedTrade) }}>{fmtMoney(linkedTrade.pnl)}</span>
+                </button>
+              ) : en.tradeId ? (
+                <div style={{ fontSize: 13, color: COLORS.textMuted }}>The linked trade was deleted.</div>
+              ) : null}
+
+              {en.feelingDetail && (
+                <div>
+                  <div style={blockTitle}>What triggered it</div>
+                  <div style={{ fontSize: 15, color: COLORS.text, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>{en.feelingDetail}</div>
                 </div>
-              ))}
-            </div>
-            {en.feelingDetail && (
-              <div style={{ marginBottom: 14 }}>
-                <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>What was the feeling</div>
-                <div style={{ fontSize: 13.5, color: COLORS.text, whiteSpace: "pre-wrap" }}>{en.feelingDetail}</div>
+              )}
+              {en.conditions && (
+                <div style={{ background: COLORS.subtleBg, borderRadius: 12, padding: "10px 14px" }}>
+                  <div style={{ ...blockTitle, marginBottom: 4 }}>Market conditions</div>
+                  <div style={{ fontSize: 13.5, color: COLORS.text, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{en.conditions}</div>
+                </div>
+              )}
+              {en.notes && (
+                <div>
+                  <div style={blockTitle}>Notes</div>
+                  <div style={{ fontSize: 14.5, color: COLORS.text, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>{en.notes}</div>
+                </div>
+              )}
+              {!en.feelingDetail && !en.conditions && !en.notes && (
+                <div style={{ fontSize: 13.5, color: COLORS.textMuted }}>No notes written for this entry.</div>
+              )}
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => { setViewEntryId(null); openEditEntry(en); }} style={{ ...primaryBtnStyle_(), flex: 1, textAlign: "center" }}>
+                  Edit entry
+                </button>
+                <button onClick={() => { setViewEntryId(null); deleteEntry(en.id); }} style={{ ...ghostBtnStyle_(), padding: "10px 16px", fontSize: 13.5, color: COLORS.loss }}>
+                  Delete
+                </button>
               </div>
-            )}
-            {en.notes && (
-              <div style={{ marginBottom: 18 }}>
-                <div style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 600, marginBottom: 3 }}>Notes</div>
-                <div style={{ fontSize: 13.5, color: COLORS.text, whiteSpace: "pre-wrap" }}>{en.notes}</div>
-              </div>
-            )}
-            <div style={{ display: "flex", gap: 10 }}>
-              <button
-                onClick={() => { setViewEntryId(null); openEditEntry(en); }}
-                style={{ ...primaryBtnStyle_(), flex: 1, textAlign: "center" }}
-              >
-                ✎ Edit entry
-              </button>
-              <button
-                onClick={() => { setViewEntryId(null); deleteEntry(en.id); }}
-                style={{ ...deleteBtnStyle_(), flex: "0 0 auto", padding: "10px 16px" }}
-              >
-                Delete entry
-              </button>
             </div>
           </DraggablePopup>
         );
       })()}
+
+      {lightbox && (
+        <MediaLightbox
+          items={lightbox.items}
+          index={lightbox.index}
+          seedUrls={lightbox.seedUrls}
+          onIndex={(i) => setLightbox((lb) => (lb ? { ...lb, index: i } : lb))}
+          onClose={() => setLightbox(null)}
+          renderInfo={(it) => {
+            const live = findTrade(it.trade.id) || it.trade;
+            const d = tradeDetailsFor(live);
+            return (
+              <TradeDetails
+                trade={live}
+                confluenceNames={d.confluenceNames}
+                targetNames={d.targetNames}
+                linkedEntries={d.linkedEntries}
+                onOpenEntry={(id) => { setLightbox(null); setViewEntryId(id); }}
+                actions={
+                  <>
+                    <button onClick={() => { setLightbox(null); openEditTrade(live); }} style={{ ...primaryBtnStyle_(), flex: 1, textAlign: "center" }}>
+                      Edit trade
+                    </button>
+                    <button onClick={() => { setLightbox(null); openTradeView(live.id); }} style={{ ...ghostBtnStyle_(), flex: 1, padding: "10px 14px", fontSize: 13.5 }}>
+                      Open trade
+                    </button>
+                  </>
+                }
+              />
+            );
+          }}
+        />
+      )}
 
       {mediaModalTradeId && (() => {
         const t = findTrade(mediaModalTradeId);
