@@ -872,8 +872,8 @@ function MediaLightbox({ items, index, seedUrls, onIndex, onClose, renderInfo, l
 }
 
 // Every screenshot across every trade, newest first, as cards: the image on
-// top and the trade it belongs to underneath. Click one to open it full
-// screen with the trade's details.
+// top and the trade it belongs to underneath. Click one to open that trade
+// (its popup leads with the screenshot, which enlarges full screen).
 function AllMediaGrid({ items, onOpen }) {
   const [urls, setUrls] = useState({});
   const [loading, setLoading] = useState(true);
@@ -925,8 +925,8 @@ function AllMediaGrid({ items, onOpen }) {
                 key={m.id}
                 type="button"
                 onClick={() => onOpen(shown, i, urls)}
-                aria-label={`Open screenshot for trade #${number}`}
-                style={{ display: "block", width: "100%", padding: 0, textAlign: "left", background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, overflow: "hidden", boxShadow: COLORS.shadow, cursor: "zoom-in" }}
+                aria-label={`Open trade #${number}`}
+                style={{ display: "block", width: "100%", padding: 0, textAlign: "left", background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 16, overflow: "hidden", boxShadow: COLORS.shadow, cursor: "pointer" }}
               >
                 <div style={{ position: "relative", aspectRatio: "16 / 10", background: COLORS.ink }}>
                   {urls[m.id] ? (
@@ -2233,6 +2233,9 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
   const [viewTradeId, setViewTradeId] = useState(null);
   // Full-screen screenshot viewer: { items: [{ media, trade, number }], index, seedUrls }
   const [lightbox, setLightbox] = useState(null);
+  // Set when the trade popup was opened from a calendar day: { date, ids }
+  // — lets the popup step through that day's trades.
+  const [dayContext, setDayContext] = useState(null);
   const [viewEntryId, setViewEntryId] = useState(null);
   const tradePopupNodeRef = useRef(null);
   const entryPopupNodeRef = useRef(null);
@@ -3521,22 +3524,19 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
     return { confluenceNames, targetNames, linkedEntries };
   }
 
-  // A calendar day opens straight into the full-screen viewer: one page per
-  // screenshot (or per trade, if it has none), in trade order.
-  function openDayViewer(dateStr) {
-    const dayTrades = trades
+  // A calendar day opens its first trade's popup; the popup's ‹ › step
+  // through the rest of that day's trades.
+  function openDay(dateStr) {
+    const ids = trades
       .filter((t) => t.date === dateStr)
-      .sort((a, b) => (tradeNumberMap.get(a.id) || 0) - (tradeNumberMap.get(b.id) || 0));
-    if (!dayTrades.length) return;
-    const items = dayTrades.flatMap((t) => {
-      const number = tradeNumberMap.get(t.id);
-      const media = (t.media || []).filter((m) => m.type === "image" || m.type === "video");
-      return media.length ? media.map((m) => ({ media: m, trade: t, number })) : [{ media: null, trade: t, number }];
-    });
-    setLightbox({ items, index: 0, seedUrls: {}, day: dateStr });
+      .sort((a, b) => (tradeNumberMap.get(a.id) || 0) - (tradeNumberMap.get(b.id) || 0))
+      .map((t) => t.id);
+    if (!ids.length) return;
+    openTradeView(ids[0], { date: dateStr, ids });
   }
 
-  function openTradeView(tradeId) {
+  function openTradeView(tradeId, dayCtx = null) {
+    setDayContext(dayCtx);
     setViewTradeId(tradeId);
     const linked = entries.find((en) => en.tradeId === tradeId);
     setViewEntryId(linked ? linked.id : null);
@@ -4520,7 +4520,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
               {tab === "dashboard" ? "Dashboard" : tab === "trades" ? "Add Trade" : tab === "media" ? "Trades" : tab === "calendar" ? "Performance" : tab === "patterns" ? "Patterns" : tab === "insights" ? "Insights" : tab === "friends" ? "Friends" : tab === "leaderboard" ? "Leaderboard" : tab === "feedback" ? "Feedback" : tab === "settings" ? "Settings" : "Journal"}
             </h1>
             <div style={{ fontSize: 13.5, color: COLORS.textMuted, marginTop: 6 }}>
-              {tab === "dashboard" ? "Your performance and your friends'" : tab === "trades" ? "Log and review every trade" : tab === "media" ? "Your trade screenshots, newest first. Click one to enlarge it." : tab === "calendar" ? "Account growth and daily/weekly P&L" : tab === "patterns" ? "" : tab === "insights" ? "What your data says you should do next" : tab === "friends" ? "See each other's trades" : tab === "leaderboard" ? "See how you rank, opt-in only" : tab === "feedback" ? "Tell us what to build next" : tab === "settings" ? "Your plan, trading rules and how the app looks" : "Track how you felt and why"}
+              {tab === "dashboard" ? "Your performance and your friends'" : tab === "trades" ? "Log and review every trade" : tab === "media" ? "Your trade screenshots, newest first. Click one to open the trade." : tab === "calendar" ? "Account growth and daily/weekly P&L" : tab === "patterns" ? "" : tab === "insights" ? "What your data says you should do next" : tab === "friends" ? "See each other's trades" : tab === "leaderboard" ? "See how you rank, opt-in only" : tab === "feedback" ? "Tell us what to build next" : tab === "settings" ? "Your plan, trading rules and how the app looks" : "Track how you felt and why"}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
@@ -5222,7 +5222,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
           </>
         ) : tab === "media" ? (
           <>
-            <AllMediaGrid items={allMediaItems} onOpen={(items, index, seedUrls) => setLightbox({ items, index, seedUrls })} />
+            <AllMediaGrid items={allMediaItems} onOpen={(items, index) => openTradeView(items[index].trade.id)} />
           </>
         ) : tab === "calendar" ? (
           <>
@@ -5351,7 +5351,7 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                       return (
                         <div
                           key={ci}
-                          onClick={() => hasTrades && openDayViewer(cell.dateStr)}
+                          onClick={() => hasTrades && openDay(cell.dateStr)}
                           style={{
                             position: "relative",
                             borderRadius: 12, minHeight: 78, padding: "9px 11px",
@@ -6732,11 +6732,33 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
         return (
           <DraggablePopup
             title={t.entryType === "payout" ? "Payout" : `Trade #${number}`}
-            onClose={() => setViewTradeId(null)}
+            onClose={() => { setViewTradeId(null); setDayContext(null); }}
             defaultX={Math.max(20, (window.innerWidth - 940) / 2)}
             defaultY={90}
             exposeRef={tradePopupNodeRef}
           >
+            {dayContext && dayContext.ids.includes(t.id) && (() => {
+              const pos = dayContext.ids.indexOf(t.id);
+              const n = dayContext.ids.length;
+              const dayTrades = dayContext.ids.map(findTrade).filter(Boolean);
+              const dayTotal = dayTrades.reduce((s, x) => s + x.pnl, 0);
+              const dayLabel = new Date(dayContext.date + "T00:00:00").toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+              const go = (i) => openTradeView(dayContext.ids[i], dayContext);
+              const arrow = (disabled) => ({ width: 32, height: 32, borderRadius: 9, border: "none", background: disabled ? "transparent" : COLORS.card, color: disabled ? COLORS.borderStrong : COLORS.text, fontSize: 18, lineHeight: 1, cursor: disabled ? "default" : "pointer", boxShadow: disabled ? "none" : "0 1px 2px rgba(27,22,64,0.10)" });
+              return (
+                <div style={{ marginBottom: 16, display: "grid", gap: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, background: COLORS.subtleBg, borderRadius: 12, padding: 6 }}>
+                    {n > 1 ? <button type="button" onClick={() => pos > 0 && go(pos - 1)} disabled={pos === 0} aria-label="Previous trade this day" style={arrow(pos === 0)}>‹</button> : <span style={{ width: 32 }} />}
+                    <span style={{ fontSize: 13, fontWeight: 600, color: COLORS.textMuted, textAlign: "center" }}>
+                      {dayLabel}{n > 1 ? `, trade ${pos + 1} of ${n}` : ""}
+                      <span style={{ marginLeft: 8 }}>Day <span className="mono" style={{ fontWeight: 700, color: dayTotal >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(dayTotal)}</span></span>
+                    </span>
+                    {n > 1 ? <button type="button" onClick={() => pos < n - 1 && go(pos + 1)} disabled={pos === n - 1} aria-label="Next trade this day" style={arrow(pos === n - 1)}>›</button> : <span style={{ width: 32 }} />}
+                  </div>
+                  {dayMap[dayContext.date] && dayMap[dayContext.date].dllHit && <div><StatusPill tone="loss">Daily loss limit hit this day</StatusPill></div>}
+                </div>
+              );
+            })()}
             {mediaCount > 0 && (
               <TradeShotThumb
                 media={mediaItems[0].media}
@@ -6850,32 +6872,10 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
           seedUrls={lightbox.seedUrls}
           onIndex={(i) => setLightbox((lb) => (lb ? { ...lb, index: i } : lb))}
           onClose={() => setLightbox(null)}
-          onAddMedia={(t) => { setLightbox(null); setMediaModalTradeId(t.id); }}
-          label={lightbox.day ? (i, n) => {
-            const short = new Date(lightbox.day + "T00:00:00").toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
-            return n > 1 ? `${short}, ${i + 1} of ${n}` : short;
-          } : undefined}
           renderInfo={(it) => {
             const live = findTrade(it.trade.id) || it.trade;
             const d = tradeDetailsFor(live);
-            const day = lightbox.day;
-            const dayTrades = day ? trades.filter((t) => t.date === day) : [];
-            const dayTotal = dayTrades.reduce((s, t) => s + t.pnl, 0);
-            const dayTradeIds = new Set(dayTrades.map((t) => t.id));
-            const dayOnlyEntries = day ? entries.filter((en) => en.date === day && !(en.tradeId && dayTradeIds.has(en.tradeId))) : [];
             return (
-              <>
-              {day && (
-                <div style={{ display: "grid", gap: 8, marginBottom: 22 }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, background: COLORS.subtleBg, borderRadius: 12, padding: "10px 14px" }}>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: COLORS.textMuted }}>
-                      {(() => { const n = dayTrades.filter((t) => t.entryType !== "payout").length; return `Day total, ${n} trade${n === 1 ? "" : "s"}`; })()}
-                    </span>
-                    <span className="display" style={{ fontSize: 17, fontWeight: 700, color: dayTotal >= 0 ? COLORS.win : COLORS.loss }}>{fmtMoney(dayTotal)}</span>
-                  </div>
-                  {dayMap[day] && dayMap[day].dllHit && <StatusPill tone="loss">Daily loss limit hit this day</StatusPill>}
-                </div>
-              )}
               <TradeDetails
                 trade={live}
                 confluenceNames={d.confluenceNames}
@@ -6883,37 +6883,11 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
                 linkedEntries={d.linkedEntries}
                 onOpenEntry={(id) => { setLightbox(null); setViewEntryId(id); }}
                 actions={
-                  <>
-                    <button onClick={() => { setLightbox(null); openEditTrade(live); }} style={{ ...primaryBtnStyle_(), flex: 1, textAlign: "center" }}>
-                      Edit trade
-                    </button>
-                    <button onClick={() => { setLightbox(null); openTradeView(live.id); }} style={{ ...ghostBtnStyle_(), flex: 1, padding: "10px 14px", fontSize: 13.5 }}>
-                      Open trade
-                    </button>
-                  </>
+                  <button onClick={() => { setLightbox(null); openEditTrade(live); }} style={{ ...primaryBtnStyle_(), flex: 1, textAlign: "center" }}>
+                    Edit trade
+                  </button>
                 }
               />
-              {dayOnlyEntries.length > 0 && (
-                <div style={{ marginTop: 22 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 700, color: COLORS.textMuted, marginBottom: 8 }}>Journal from this day</div>
-                  <div style={{ display: "grid", gap: 8 }}>
-                    {dayOnlyEntries.map((en) => {
-                      const mi = moodInfo(en.mood);
-                      const text = en.feelingDetail || en.notes;
-                      return (
-                        <div key={en.id} onClick={() => { setLightbox(null); setViewEntryId(en.id); }} style={{ background: COLORS.subtleBg, borderRadius: 12, padding: "10px 12px", cursor: "pointer" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: text ? 4 : 0 }}>
-                            <span style={{ width: 7, height: 7, borderRadius: "50%", background: mi.color }} />
-                            <span style={{ fontSize: 13, fontWeight: 700, color: mi.color }}>{mi.label}</span>
-                          </div>
-                          {text && <div style={{ fontSize: 13.5, color: COLORS.text, lineHeight: 1.5 }}>{text.length > 180 ? text.slice(0, 180) + "…" : text}</div>}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-              </>
             );
           }}
         />
