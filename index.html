@@ -3886,7 +3886,8 @@ function TradeJournal({ session, onLogout, initialDisplayName, subscriptionStatu
   const patternSortComparators = {
     number: (a, b) => a.number - b.number,
     pnl: (a, b) => b.total - a.total,
-    winRate: (a, b) => b.winRateP - a.winRateP,
+    // Equal win rates: the pattern taken more often ranks higher.
+    winRate: (a, b) => b.winRateP - a.winRateP || b.count - a.count,
     frequency: (a, b) => b.count - a.count,
     expectancy: (a, b) => b.expectancy - a.expectancy,
   };
